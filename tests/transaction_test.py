@@ -6,6 +6,7 @@ from tablestore import *
 from tablestore.error import *
 import time
 import logging
+from tests.test_utils import make_table_name
 
 
 class TransactionTest(APITestBase):
@@ -14,10 +15,27 @@ class TransactionTest(APITestBase):
 
     """TransactionTest"""
 
+    def setUp(self):
+        APITestBase.setUp(self)
+        self.table_name = make_table_name(TransactionTest.TABLE_NAME)
+
+        table_meta = TableMeta(self.table_name, [('PK0', 'INTEGER'), ('PK1', 'STRING')])
+
+        table_options = TableOptions()
+        reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
+        self.client_test.create_table(table_meta, table_options, reserved_throughput)
+
+    def tearDown(self):
+        try:
+            self.client_test.delete_table(self.table_name)
+        except:
+            pass
+        APITestBase.tearDown(self)
+
     def test_put_row_abort(self):  # test getRow with transaction at the same time
         """Test the transaction of UpdateRow, call the StartLocalTransaction API, and then Abort it"""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         attribute_columns = [('value', 'origin value')]
         key = [('PK0', 1)]
@@ -59,7 +77,7 @@ class TransactionTest(APITestBase):
     def test_put_row_commit(self):  # test getRow with transaction at the same time
         """Test the transaction of UpdateRow, call the StartLocalTransaction API, then commit"""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         attribute_columns = [('value', 'origin value')]
         key = [('PK0', 1)]
@@ -101,7 +119,7 @@ class TransactionTest(APITestBase):
     def test_update_row_abort(self):  # test getRow with transaction at the same time
         """Test the transaction of UpdateRow, call the StartLocalTransaction API, and then Abort it"""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         attribute_columns = [('value', 'origin value')]
         key = [('PK0', 1)]
@@ -143,7 +161,7 @@ class TransactionTest(APITestBase):
     def test_update_row_commit(self):  # test getRow with transaction at the same time
         """Test the transaction of UpdateRow, call the StartLocalTransaction API, then commit."""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         attribute_columns = [('value', 'origin value')]
         key = [('PK0', 1)]
@@ -185,7 +203,7 @@ class TransactionTest(APITestBase):
     def test_batch_write_row_abort(self):  # test getRow with transaction at the same time
         """Test the transaction of BatchWriteRow, call the StartLocalTransaction API, and then Abort it"""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         attribute_columns = [('value', 'origin value')]
         key = [('PK0', 1)]
@@ -235,7 +253,7 @@ class TransactionTest(APITestBase):
     def test_batch_write_row_commit(self):  # test getRow with transaction at the same time
         """Test the transaction of BatchWriteRow, call the StartLocalTransaction API, then commit"""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         attribute_columns = [('value', 'origin value')]
         key = [('PK0', 1)]
@@ -285,7 +303,7 @@ class TransactionTest(APITestBase):
     def test_delete_row_abort(self):  # test getRange with transaction at the same time
         """Test the transaction of DeleteRow, call the StartLocalTransaction API, and then Abort it"""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         attribute_columns = [('value', 'origin value')]
         key = [('PK0', 1)]
@@ -345,7 +363,7 @@ class TransactionTest(APITestBase):
     def test_delete_row_commit(self):  # test getRange with transaction at the same time
         """Test the transaction of DeleteRow, call the StartLocalTransaction API, then commit"""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         attribute_columns = [('value', 'origin value')]
         key = [('PK0', 1)]
@@ -405,7 +423,7 @@ class TransactionTest(APITestBase):
     def test_invalid_transaction_id(self):
         """Fail test: Invalid transaction ID"""
 
-        table_name = TransactionTest.TABLE_NAME
+        table_name = self.table_name
         primary_key = [('PK0', 1), ('PK1', 'transaction')]
         new_attribute_columns = [('value', 'new value')]
 

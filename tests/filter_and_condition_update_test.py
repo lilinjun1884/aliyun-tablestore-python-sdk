@@ -7,15 +7,43 @@ from tablestore import *
 from tablestore.error import *
 import time
 import logging
+from tests.test_utils import make_table_name
 
 class FilterAndConditionUpdateTest(APITestBase):
     TABLE_NAME = "test_filter_and_condition_update"
 
     """ConditionUpdate"""
 
+    def setUp(self):
+        APITestBase.setUp(self)
+
+        self.table_name_update_row = make_table_name(FilterAndConditionUpdateTest.TABLE_NAME)
+        self.table_name_put_row = make_table_name(FilterAndConditionUpdateTest.TABLE_NAME)
+        self.table_name_get_row = make_table_name(FilterAndConditionUpdateTest.TABLE_NAME)
+        self.table_name_delete_row = make_table_name(FilterAndConditionUpdateTest.TABLE_NAME)
+        self.table_name_batch_write_0 = make_table_name('myTable0_')
+        self.table_name_batch_write_1 = make_table_name('myTable1_')
+        self.table_name_batch_get_0 = make_table_name('myTable0_')
+        self.table_name_batch_get_1 = make_table_name('myTable1_')
+        self.table_name_get_range = make_table_name(FilterAndConditionUpdateTest.TABLE_NAME)
+        self.table_name_get_range2 = make_table_name(FilterAndConditionUpdateTest.TABLE_NAME)
+
+    def tearDown(self):
+        for table_name in [self.table_name_update_row, self.table_name_put_row,
+                          self.table_name_get_row, self.table_name_delete_row,
+                          self.table_name_batch_write_0, 
+                          self.table_name_batch_write_1, self.table_name_batch_get_0,
+                          self.table_name_batch_get_1, self.table_name_get_range,
+                          self.table_name_get_range2]:
+            try:
+                self.client_test.delete_table(table_name)
+            except:
+                pass
+        APITestBase.tearDown(self)
+
     def test_update_row(self):
         """Call the UpdateRow API, construct different Conditions"""
-        table_name = FilterAndConditionUpdateTest.TABLE_NAME + self.get_python_version()
+        table_name = self.table_name_update_row
         table_meta = TableMeta(table_name, [('gid', ColumnType.INTEGER), ('uid', ColumnType.INTEGER)])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -37,6 +65,7 @@ class FilterAndConditionUpdateTest(APITestBase):
         row.attribute_columns = attribute_columns
         try:
             condition = Condition(RowExistenceExpectation.IGNORE, SingleColumnCondition("index", 1, ComparatorType.EQUAL))
+            self.assertIsInstance(condition.get_column_condition(), SingleColumnCondition)
             self.client_test.update_row(table_name, row, condition)
             self.assertTrue(False)
         except OTSServiceError as e:
@@ -206,7 +235,7 @@ class FilterAndConditionUpdateTest(APITestBase):
 
     def test_put_row(self):
         """Call the PutRow API to construct different Conditions"""
-        table_name = FilterAndConditionUpdateTest.TABLE_NAME + self.get_python_version()
+        table_name = self.table_name_put_row
         table_meta = TableMeta(table_name, [('gid', ColumnType.INTEGER), ('uid', ColumnType.INTEGER)])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -408,7 +437,7 @@ class FilterAndConditionUpdateTest(APITestBase):
 
     def test_get_row(self):
         """Call the GetRow API, construct different Conditions"""
-        table_name = FilterAndConditionUpdateTest.TABLE_NAME + self.get_python_version()
+        table_name = self.table_name_get_row
         table_meta = TableMeta(table_name, [('gid', ColumnType.INTEGER), ('uid', ColumnType.INTEGER)])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -525,7 +554,7 @@ class FilterAndConditionUpdateTest(APITestBase):
 
     def test_delete_row(self):
         """Call the DeleteRow API, construct different Conditions"""
-        table_name = FilterAndConditionUpdateTest.TABLE_NAME  + self.get_python_version()
+        table_name = self.table_name_delete_row
         table_meta = TableMeta(table_name, [('gid', ColumnType.INTEGER), ('uid', ColumnType.INTEGER)])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -569,10 +598,11 @@ class FilterAndConditionUpdateTest(APITestBase):
         self.client_test.delete_row(table_name, primary_key, condition)
 
 
-    def test_batch_write_row(self): 
-        """Call the BatchWriteRow API to construct different Conditions"""
-        myTable0 = 'myTable0_' + self.get_python_version()
-        myTable1 = 'myTable1_' + self.get_python_version()
+    def test_batch_write_row(self):
+        """Call the BatchWriteRow API, construct different Conditions"""
+        myTable0 = self.table_name_batch_write_0
+        myTable1 = self.table_name_batch_write_1
+
         table_meta = TableMeta(myTable0, [('gid', ColumnType.INTEGER), ('uid', ColumnType.INTEGER)])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -762,8 +792,8 @@ class FilterAndConditionUpdateTest(APITestBase):
        
     def test_batch_get_row(self):
         """Call the BatchGetRow API, construct different Conditions"""
-        myTable0 = 'myTable0_' + self.get_python_version()
-        myTable1 = 'myTable1_' + self.get_python_version()
+        myTable0 = self.table_name_batch_get_0
+        myTable1 = self.table_name_batch_get_1
         table_meta = TableMeta(myTable0, [('gid', ColumnType.INTEGER), ('uid', ColumnType.INTEGER)])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -944,7 +974,7 @@ class FilterAndConditionUpdateTest(APITestBase):
 
     def test_get_range(self):
         """Call the GetRange API, construct different Conditions"""
-        table_name = FilterAndConditionUpdateTest.TABLE_NAME + self.get_python_version()
+        table_name = self.table_name_get_range
         table_meta = TableMeta(table_name, [('gid', ColumnType.INTEGER), ('uid', ColumnType.INTEGER)])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -1003,7 +1033,7 @@ class FilterAndConditionUpdateTest(APITestBase):
     
     def test_get_range2(self):
         """Call the GetRange API, construct different SingleColumnRegexConditions"""
-        table_name = FilterAndConditionUpdateTest.TABLE_NAME + self.get_python_version()
+        table_name = self.table_name_get_range2
         table_meta = TableMeta(table_name, [('gid', ColumnType.INTEGER), ('uid', ColumnType.INTEGER)])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))

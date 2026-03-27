@@ -5,3 +5,7 @@ OTS_ACCESS_KEY_SECRET = os.getenv("OTS_TEST_ACCESS_KEY_SECRET")
 OTS_ENDPOINT = os.getenv("OTS_TEST_ENDPOINT")
 OTS_INSTANCE = os.getenv("OTS_TEST_INSTANCE")
 OTS_REGION = os.getenv("OTS_TEST_REGION")
+
+OTS_ENABLE_NATIVE = True
+# do not allow fallback in test by default since fallback is not a normal case
+OTS_NATIVE_FALLBACK = False

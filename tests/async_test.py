@@ -6,17 +6,24 @@ from aiohttp import ClientTimeout
 from tablestore import *
 import unittest
 from unittest import IsolatedAsyncioTestCase
-from .lib import test_config
+from tests.lib import test_config
+from tests.test_utils import make_table_name
 
 
 class AsyncTest(IsolatedAsyncioTestCase):
     def setUp(self):
-        self.table_name = 'AsyncTest'
+        self.table_name = make_table_name('AsyncTest')
         self.rows_count = 100
 
-        self.async_client = AsyncOTSClient(test_config.OTS_ENDPOINT, test_config.OTS_ACCESS_KEY_ID, test_config.OTS_ACCESS_KEY_SECRET, test_config.OTS_INSTANCE, region=test_config.OTS_REGION)
+        self.async_client = AsyncOTSClient(test_config.OTS_ENDPOINT, test_config.OTS_ACCESS_KEY_ID, test_config.OTS_ACCESS_KEY_SECRET, test_config.OTS_INSTANCE, region=test_config.OTS_REGION, enable_native=test_config.OTS_ENABLE_NATIVE, native_fallback=test_config.OTS_NATIVE_FALLBACK)
 
         asyncio.run(self._prepare_empty_table())
+
+    def tearDown(self):
+        try:
+            asyncio.run(self.async_client.delete_table(self.table_name))
+        except Exception:
+            pass
 
     def _get_batch_write_request(self, id_base = 0):
         put_row_items = []
@@ -69,8 +76,6 @@ class AsyncTest(IsolatedAsyncioTestCase):
             result = await self.async_client.batch_get_row(self._get_batch_get_request(id_base=0))
             self.assertEqual(self._get_result_rows(result), self.rows_count)
 
-        await self._prepare_empty_table()
-
     async def test_parallel(self):
         paragraph = 3
 
@@ -91,8 +96,6 @@ class AsyncTest(IsolatedAsyncioTestCase):
             for result in results:
                 self.assertEqual(self._get_result_rows(result), self.rows_count)
 
-        await self._prepare_empty_table()
-
 
     async def test_double_close(self):
         async with self.async_client:
@@ -109,8 +112,6 @@ class AsyncTest(IsolatedAsyncioTestCase):
         self.assertEqual(self._get_result_rows(result), self.rows_count)
         await self.async_client.close()
 
-        await self._prepare_empty_table()
-
     async def test_timeout_parameter(self):
         async with AsyncOTSClient(
                 test_config.OTS_ENDPOINT,
@@ -118,7 +119,9 @@ class AsyncTest(IsolatedAsyncioTestCase):
                 test_config.OTS_ACCESS_KEY_SECRET,
                 test_config.OTS_INSTANCE,
                 region=test_config.OTS_REGION,
-                socket_timeout=10
+                socket_timeout=10,
+                enable_native=test_config.OTS_ENABLE_NATIVE,
+                native_fallback=test_config.OTS_NATIVE_FALLBACK,
         ) as client:
             await client.batch_get_row(self._get_batch_get_request(id_base=0))
             self.assertEqual(client._connection.pool._timeout, ClientTimeout(sock_connect=10, sock_read=10))
@@ -129,7 +132,9 @@ class AsyncTest(IsolatedAsyncioTestCase):
                 test_config.OTS_ACCESS_KEY_SECRET,
                 test_config.OTS_INSTANCE,
                 region=test_config.OTS_REGION,
-                socket_timeout=(10, 30)
+                socket_timeout=(10, 30),
+                enable_native=test_config.OTS_ENABLE_NATIVE,
+                native_fallback=test_config.OTS_NATIVE_FALLBACK,
         ) as client:
             await client.batch_get_row(self._get_batch_get_request(id_base=0))
             self.assertEqual(client._connection.pool._timeout, ClientTimeout(sock_connect=10, sock_read=30))

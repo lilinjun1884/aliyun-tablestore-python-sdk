@@ -7,8 +7,30 @@ from tablestore.error import *
 import time
 import logging
 import json
+from tests.test_utils import make_table_name
 
 class SearchIndexTest(APITestBase):
+
+    def setUp(self):
+        APITestBase.setUp(self)
+        
+        self.table_name_create_search_index = make_table_name('full_text_search_test_create_search_index')
+        self.table_name_create_search_index_2 = make_table_name('full_text_search_test_create_search_index_2')
+        self.table_name_queries = make_table_name('full_text_search_test_queries')
+
+    def tearDown(self):
+        for t in [self.table_name_create_search_index, self.table_name_create_search_index_2, self.table_name_queries]:
+            try:
+                indexes = self.client_test.list_search_index(t)
+                for idx in indexes:
+                    self.client_test.delete_search_index(t, idx[1])
+            except:
+                pass
+            try:
+                self.client_test.delete_table(t)
+            except:
+                pass
+        APITestBase.tearDown(self)
 
     def _check_field_schema(self, expect_field_schema, actual_field_schema):
         self.assert_equal(expect_field_schema.field_name, actual_field_schema.field_name)
@@ -40,7 +62,7 @@ class SearchIndexTest(APITestBase):
             self.assert_equal(actual_index_meta.index_setting.routing_fields, expect_index_meta.index_setting.routing_fields)
 
     def test_create_search_index(self):
-        table_name = 'full_text_search_test_' + self.get_python_version()
+        table_name = self.table_name_create_search_index
         table_meta = TableMeta(table_name, [('url', 'STRING')])
 
         table_options = TableOptions()
@@ -66,8 +88,8 @@ class SearchIndexTest(APITestBase):
         self.assertTrue(sync_stat.sync_phase == SyncPhase.INCR or sync_stat.sync_phase == SyncPhase.FULL)
         self.assertTrue(sync_stat.current_sync_timestamp >= 0)
 
-    def test_create_search_index(self):
-        table_name = 'full_text_search_test_' + self.get_python_version()
+    def test_create_search_index_2(self):
+        table_name = self.table_name_create_search_index_2
         table_meta = TableMeta(table_name, [('url', 'STRING')])
 
         table_options = TableOptions()
@@ -311,12 +333,13 @@ class SearchIndexTest(APITestBase):
         return search_response.rows
 
     def test_queries(self):
-        table_name = 'full_text_search_test_' + self.get_python_version()
+        table_name = self.table_name_queries
         index_name = 'search_index'
 
         self._prepare_table(table_name)
         self._prepare_data(table_name)
         self._prepare_index(table_name, index_name)
+        self._wait_search_index_ready(table_name, index_name, 4)
 
         self._test_match_all_query(table_name, index_name)
         self._test_match_query(table_name, index_name)
@@ -384,7 +407,6 @@ class SearchIndexTest(APITestBase):
         index_sort = Sort(sorters=[PrimaryKeySort(SortOrder.ASC)])
         index_meta = SearchIndexMeta(fields, index_setting=index_setting, index_sort=index_sort) # default with index sort
         self.client_test.create_search_index(table_name, index_name, index_meta)
-        self.wait_for_search_index_ready(self.client_test, table_name, index_name)
 
 if __name__ == '__main__':
     unittest.main()

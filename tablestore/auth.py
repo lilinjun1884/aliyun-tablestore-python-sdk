@@ -1,10 +1,12 @@
 # -*- coding: utf8 -*-
 
+import base64
 import hashlib
 import hmac
-import base64
-import six
 from abc import ABC, abstractmethod
+from functools import lru_cache
+
+import six
 
 try:
     from urlparse import urlparse, parse_qsl
@@ -14,7 +16,7 @@ except ImportError:
 
 import tablestore.consts as consts
 import tablestore.utils as utils
-from tablestore.credentials import CredentialsProvider
+from tablestore.credentials import Credentials
 from tablestore.error import *
 
 
@@ -36,14 +38,23 @@ def call_signature_method_sha256(signing_key, signature_string, encoding):
     return base64.b64encode(calculate_hmac(signing_key, signature_string, hashlib.sha256, encoding)).decode(encoding)
 
 
-class SignBase(ABC):
-    def __init__(self, credentials_provider: CredentialsProvider, encoding, **kwargs):
-        self.credentials_provider = credentials_provider
-        self.encoding = encoding
-        self.signing_key = None
+class RequestContext(object):
+    def __init__(self, credentials: Credentials, sign_date: str = None):
+        self.credentials = credentials
+        self.sign_date = sign_date
 
-    def get_credentials_provider(self):
-        return self.credentials_provider
+    def get_credentials(self) -> Credentials:
+        return self.credentials
+
+    def set_sign_date(self, sign_date: str):
+        self.sign_date = sign_date
+
+    def get_sign_date(self) -> str:
+        return self.sign_date
+
+class SignBase(ABC):
+    def __init__(self, encoding: str, **kwargs):
+        self.encoding = encoding
 
     @staticmethod
     def _make_headers_string(headers):
@@ -65,82 +76,90 @@ class SignBase(ABC):
         signature_string += headers_string + '\n'
         return signature_string
 
-    def make_response_signature(self, query, headers):
+    def make_response_signature(self, query, headers, signing_key):
         uri = urlparse(query)[2]
         headers_string = self._make_headers_string(headers)
         signature_string = headers_string + '\n' + uri
         # Response signature use same signing key as request signature
         # But the signature method is supposed to be HmacSHA1
-        signature = call_signature_method_sha1(self.signing_key, signature_string, self.encoding)
+        signature = call_signature_method_sha1(signing_key, signature_string, self.encoding)
         return signature
 
     @abstractmethod
-    def gen_signing_key(self):
+    def get_signing_key(self, request_context: RequestContext):
         pass
 
     @abstractmethod
-    def make_request_signature_and_add_headers(self, query, headers):
+    def make_request_signature_and_add_headers(self, query, headers, request_context: RequestContext):
         pass
 
 
 class SignV2(SignBase):
-    def __init__(self, credentials_provider: CredentialsProvider, encoding, **kwargs):
-        SignBase.__init__(self, credentials_provider, encoding, **kwargs)
+    def __init__(self, encoding: str, **kwargs):
+        SignBase.__init__(self, encoding, **kwargs)
 
-    def gen_signing_key(self):
-        self.signing_key = self.credentials_provider.get_credentials().get_access_key_secret()
+    def get_signing_key(self, request_context: RequestContext):
+        return request_context.get_credentials().get_access_key_secret()
 
-    def make_request_signature_and_add_headers(self, query, headers):
+    def make_request_signature_and_add_headers(self, query, headers, request_context: RequestContext):
         signature_string = self._get_request_signature_string(query, headers)
-        headers[consts.OTS_HEADER_SIGNATURE] = call_signature_method_sha1(self.signing_key, signature_string,
-                                                                          self.encoding)
-
+        signing_key = self.get_signing_key(request_context)
+        headers[consts.OTS_HEADER_SIGNATURE] = call_signature_method_sha1(
+            signing_key,
+            signature_string,
+            self.encoding
+        )
 
 class SignV4(SignBase):
-    def __init__(self, credentials_provider: CredentialsProvider, encoding, **kwargs):
-        SignBase.__init__(self, credentials_provider, encoding, **kwargs)
-        self.user_key = None
-        self.region = kwargs.get('region')
-        if not isinstance(self.region, str) or self.region == '':
+    def __init__(self, encoding: str, **kwargs):
+        SignBase.__init__(self, encoding, **kwargs)
+
+        self.sign_region = kwargs.get('region')
+        if not isinstance(self.sign_region, str) or self.sign_region == '':
             raise OTSClientError('region is not str or is empty.')
+
         self.sign_date = kwargs.get('sign_date')
         self.auto_update_v4_sign = (kwargs.get('auto_update_v4_sign') is True)
         if self.sign_date is None:
             self.sign_date = utils.get_now_utc_datetime().strftime(consts.V4_SIGNATURE_SIGN_DATE_FORMAT)
             self.auto_update_v4_sign = True
 
-    def gen_signing_key(self):
-        # if the signing_key is None, we need to update signing_key.
-        need_update = self.signing_key is None
-        # if the user_key changes, we need to update signing_key.
-        cur_user_key = self.credentials_provider.get_credentials().get_access_key_secret()
-        if cur_user_key != self.user_key:
-            self.user_key = cur_user_key
-            need_update = True
-        # for v4, only update the sign date and signing_key
+    @staticmethod
+    @lru_cache(maxsize=128)
+    def _get_v4_signing_key(access_key_secret: str, sign_date: str, sign_region: str, encoding: str) -> bytes:
+        origin_signing_key = consts.V4_SIGNATURE_PREFIX + access_key_secret
+        first_signing_key = calculate_hmac(origin_signing_key, sign_date, hashlib.sha256, encoding)
+        second_signing_key = calculate_hmac(first_signing_key, sign_region, hashlib.sha256, encoding)
+        third_signing_key = calculate_hmac(second_signing_key, consts.V4_SIGNATURE_PRODUCT, hashlib.sha256, encoding)
+        fourth_signing_key = calculate_hmac(third_signing_key, consts.V4_SIGNATURE_CONSTANT, hashlib.sha256, encoding)
+        return base64.b64encode(fourth_signing_key)
+
+    def _get_and_set_v4_sign_date(self, request_context: RequestContext) -> str:
         if self.auto_update_v4_sign:
             cur_date = utils.get_now_utc_datetime().strftime(consts.V4_SIGNATURE_SIGN_DATE_FORMAT)
-            # if sign_date changes, we need to update signing_key.
-            if cur_date != self.sign_date:
-                self.sign_date = cur_date
-                need_update = True
-        if self.sign_date is None:
+        else:
+            cur_date = self.sign_date
+        if cur_date is None:
             raise OTSClientError('v4 sign_date is None.')
-        if not need_update:
-            return
-        origin_signing_key = consts.V4_SIGNATURE_PREFIX + self.user_key
-        first_signing_key = calculate_hmac(origin_signing_key, self.sign_date, hashlib.sha256, self.encoding)
-        second_signing_key = calculate_hmac(first_signing_key, self.region, hashlib.sha256, self.encoding)
-        third_signing_key = calculate_hmac(second_signing_key, consts.V4_SIGNATURE_PRODUCT, hashlib.sha256,
-                                           self.encoding)
-        fourth_signing_key = calculate_hmac(third_signing_key, consts.V4_SIGNATURE_CONSTANT, hashlib.sha256,
-                                            self.encoding)
-        self.signing_key = base64.b64encode(fourth_signing_key)
 
-    def make_request_signature_and_add_headers(self, query, headers):
-        headers[consts.OTS_HEADER_SIGN_DATE] = self.sign_date
-        headers[consts.OTS_HEADER_SIGN_REGION] = self.region
+        request_context.set_sign_date(cur_date)
+        return cur_date
+
+    def get_signing_key(self, request_context: RequestContext):
+        cur_key_secret = request_context.get_credentials().get_access_key_secret()
+        cur_date = request_context.get_sign_date()
+        cur_region = self.sign_region
+
+        return self._get_v4_signing_key(cur_key_secret, cur_date, cur_region, self.encoding)
+
+    def make_request_signature_and_add_headers(self, query, headers, request_context: RequestContext):
+        headers[consts.OTS_HEADER_SIGN_DATE] = self._get_and_set_v4_sign_date(request_context)
+        headers[consts.OTS_HEADER_SIGN_REGION] = self.sign_region
         signature_string = self._get_request_signature_string(query, headers)
         signature_string += consts.V4_SIGNATURE_SALT
-        headers[consts.OTS_HEADER_SIGNATURE_V4] = call_signature_method_sha256(self.signing_key, signature_string,
-                                                                               self.encoding)
+        signing_key = self.get_signing_key(request_context)
+        headers[consts.OTS_HEADER_SIGNATURE_V4] = call_signature_method_sha256(
+            signing_key,
+            signature_string,
+            self.encoding
+        )

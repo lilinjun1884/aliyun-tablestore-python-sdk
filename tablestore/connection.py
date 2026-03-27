@@ -25,7 +25,7 @@ class ConnectionPool(object):
     NUM_POOLS = 5    # one pool per host, usually just 1 pool is needed
                       # when redirect happens, one additional pool will be created
 
-    def __init__(self, host, path, timeout=0, maxsize=50, client_ssl_version=None):
+    def __init__(self, host, path, timeout=0, maxsize=500, client_ssl_version=None):
         self.host = host
         self.path = path
        
@@ -67,7 +67,7 @@ class ConnectionPool(object):
 
 class AsyncConnectionPool(object):
 
-    def __init__(self, host, path, timeout=50, maxsize=50, keepalive_timeout=12, force_close=False, client_ssl_version=None):
+    def __init__(self, host, path, timeout=50, maxsize=500, keepalive_timeout=12, force_close=False, client_ssl_version=None):
         self.host = host
         self.path = path
 

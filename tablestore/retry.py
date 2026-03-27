@@ -27,6 +27,7 @@ class RetryUtil(object):
             error_code == "OTSTableNotReady" or
             error_code == "OTSPartitionUnavailable" or
             error_code == "OTSServerBusy" or
+            error_code == "OTSOperationConflict" or
             error_code == "OTSOperationThrottled"):
             return True
 

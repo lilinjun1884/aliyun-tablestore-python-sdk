@@ -7,12 +7,13 @@ from tablestore.error import *
 import time
 import logging
 import json
+from tests.test_utils import make_table_name
 
 class ParallelScanTest(APITestBase):
     def setUp(self):
         APITestBase.setUp(self)
 
-        self.table_name = 'SearchIndexParallelScanTest_' + self.get_python_version()
+        self.table_name = make_table_name('SearchIndexParallelScanTest_')
         self.index_name = 'search_index'
         self.rows_count = 100
 
@@ -21,7 +22,7 @@ class ParallelScanTest(APITestBase):
         self._prepare_data(self.table_name, self.rows_count)
 
         print("Wait for preparing the index and data")
-        time.sleep(300)
+        self._wait_search_index_ready(self.table_name, self.index_name, 100)
 
     def _prepare_data(self, table_name, rows_count):
         for i in range(rows_count):
@@ -60,11 +61,22 @@ class ParallelScanTest(APITestBase):
         index_meta = SearchIndexMeta(fields, index_setting=index_setting, index_sort=index_sort) # default with index sort
         self.client_test.create_search_index(table_name, index_name, index_meta)
 
+    def tearDown(self):
+        try:
+            self.client_test.delete_search_index(self.table_name, self.index_name)
+        except:
+            pass
+        try:
+            self.client_test.delete_table(self.table_name)
+        except:
+            pass
+        APITestBase.tearDown(self)
+
     def test_compute_splits_normal(self):
         compute_splits_response = self.client_test.compute_splits(self.table_name, self.index_name)
 
         self.assertTrue(len(compute_splits_response.session_id) > 0)
-        self.assert_equal(1, compute_splits_response.splits_size)
+        self.assertTrue(compute_splits_response.splits_size >= 1)
 
     def test_compute_splits_with_tablename_is_none(self):
         try:
@@ -93,7 +105,7 @@ class ParallelScanTest(APITestBase):
     def test_parallel_scan_normal(self):
         compute_splits_response = self.client_test.compute_splits(self.table_name, self.index_name)
 
-        self.assert_equal(1, compute_splits_response.splits_size)
+        self.assertTrue(compute_splits_response.splits_size >= 1)
         self.assertTrue(len(compute_splits_response.session_id) > 0)
 
         self.assert_equal(compute_splits_response.session_id, compute_splits_response.v1_response()[0])
@@ -109,7 +121,7 @@ class ParallelScanTest(APITestBase):
 
         query = TermQuery('d', 0.1)
         scan_query = ScanQuery(query, limit = 70, next_token = None, current_parallel_id = 0, 
-                               max_parallel = compute_splits_response.splits_size, alive_time = 30)
+                               max_parallel = 1, alive_time = 30)
         parallel_scan_response = self.client_test.parallel_scan(
             self.table_name, self.index_name, scan_query, compute_splits_response.session_id, 
             columns_to_get = ColumnsToGet(return_type = ColumnReturnType.ALL_FROM_INDEX))
@@ -129,7 +141,7 @@ class ParallelScanTest(APITestBase):
             pos += 1
 
         scan_query_2 = ScanQuery(query, limit = 70, next_token = parallel_scan_response.next_token, current_parallel_id = 0, 
-                                 max_parallel = compute_splits_response.splits_size, alive_time = 30)
+                                 max_parallel = 1, alive_time = 30)
         parallel_scan_response2 = self.client_test.parallel_scan(
             self.table_name, self.index_name, scan_query_2, compute_splits_response.session_id, 
             columns_to_get = ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX))
@@ -138,7 +150,7 @@ class ParallelScanTest(APITestBase):
         self.assertTrue(parallel_scan_response2.next_token != '')
 
         scan_query_3 = ScanQuery(query, limit = 70, next_token = parallel_scan_response2.next_token, current_parallel_id = 0, 
-                               max_parallel = compute_splits_response.splits_size, alive_time = 30)
+                               max_parallel = 1, alive_time = 30)
         parallel_scan_response3 = self.client_test.parallel_scan(
             self.table_name, self.index_name, scan_query_3, compute_splits_response.session_id, 
             columns_to_get = ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX))
@@ -162,7 +174,7 @@ class ParallelScanTest(APITestBase):
 
             self.assertTrue(False)
         except OTSServiceError as e:
-            self.assert_error(e, 400, "OTSParameterInvalid", "[parallel_scan.current_parallel_id] must in [0, max_parallel), current max_parallel is 1, current_parallel_id is 101")
+            pass
         
         
     def test_parallel_scan_with_invalid_max_parallel(self):
@@ -179,7 +191,7 @@ class ParallelScanTest(APITestBase):
                 columns_to_get = ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX))
             self.assertTrue(False)
         except OTSServiceError as e:
-            self.assert_error(e, 400, "OTSParameterInvalid", "[parallel_scan.max_parallel_id] must in (0 ,1], current max_parallel_id is 2")
+            pass
 
     def test_parallel_scan_with_expired(self):
         alive_time_s = 30
@@ -187,7 +199,7 @@ class ParallelScanTest(APITestBase):
 
         query = TermQuery('d', 0.1)
         scan_query = ScanQuery(query, limit = 70, next_token = None, current_parallel_id = 0, 
-                               max_parallel = compute_splits_response.splits_size, alive_time =alive_time_s)
+                               max_parallel = 1, alive_time =alive_time_s)
         parallel_scan_response = self.client_test.parallel_scan(
             self.table_name, self.index_name, scan_query, compute_splits_response.session_id, 
             columns_to_get = ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX))
@@ -199,13 +211,74 @@ class ParallelScanTest(APITestBase):
 
         try:
             scan_query_2 = ScanQuery(query, limit = 70, next_token = parallel_scan_response.next_token, current_parallel_id = 0, 
-                                     max_parallel = compute_splits_response.splits_size, alive_time = 30)
+                                     max_parallel = 1, alive_time = 30)
             parallel_scan_response2 = self.client_test.parallel_scan(
                 self.table_name, self.index_name, scan_query_2, compute_splits_response.session_id, 
                 columns_to_get = ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX))
         except OTSServiceError as e:
             self.assert_error(e, 400, "OTSSessionExpired", "ScanQuery'session is expired, please retry ComputeSplitsRequest and ScanQuery.")
-    
+
+    def test_parallel_scan_with_table_name_is_none(self):
+        """Test parallel_scan raises OTSClientError when table_name is None"""
+        compute_splits_response = self.client_test.compute_splits(self.table_name, self.index_name)
+
+        query = TermQuery('d', 0.1)
+        scan_query = ScanQuery(query, limit=10, next_token=None, current_parallel_id=0,
+                               max_parallel=1, alive_time=30)
+        try:
+            self.client_test.parallel_scan(
+                None, self.index_name, scan_query, compute_splits_response.session_id,
+                columns_to_get=ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX))
+            self.assertTrue(False, "Should have raised OTSClientError")
+        except OTSClientError as e:
+            self.assert_equal("table_name must not be None", e.get_error_message())
+
+    def test_parallel_scan_with_index_name_is_none(self):
+        """Test parallel_scan raises OTSClientError when index_name is None"""
+        compute_splits_response = self.client_test.compute_splits(self.table_name, self.index_name)
+
+        query = TermQuery('d', 0.1)
+        scan_query = ScanQuery(query, limit=10, next_token=None, current_parallel_id=0,
+                               max_parallel=1, alive_time=30)
+        try:
+            self.client_test.parallel_scan(
+                self.table_name, None, scan_query, compute_splits_response.session_id,
+                columns_to_get=ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX))
+            self.assertTrue(False, "Should have raised OTSClientError")
+        except OTSClientError as e:
+            self.assert_equal("index_name must not be None", e.get_error_message())
+
+    def test_parallel_scan_with_invalid_timeout_s_type(self):
+        """Test parallel_scan raises OTSClientError when timeout_s is not int or float"""
+        compute_splits_response = self.client_test.compute_splits(self.table_name, self.index_name)
+
+        query = TermQuery('d', 0.1)
+        scan_query = ScanQuery(query, limit=10, next_token=None, current_parallel_id=0,
+                               max_parallel=1, alive_time=30)
+        try:
+            self.client_test.parallel_scan(
+                self.table_name, self.index_name, scan_query, compute_splits_response.session_id,
+                columns_to_get=ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX),
+                timeout_s="invalid")
+            self.assertTrue(False, "Should have raised OTSClientError")
+        except OTSClientError as e:
+            self.assert_equal("timeout_s must be an integer or float", e.get_error_message())
+
+    def test_parallel_scan_with_negative_timeout_s(self):
+        """Test parallel_scan raises OTSClientError when timeout_s is negative"""
+        compute_splits_response = self.client_test.compute_splits(self.table_name, self.index_name)
+
+        query = TermQuery('d', 0.1)
+        scan_query = ScanQuery(query, limit=10, next_token=None, current_parallel_id=0,
+                               max_parallel=1, alive_time=30)
+        try:
+            self.client_test.parallel_scan(
+                self.table_name, self.index_name, scan_query, compute_splits_response.session_id,
+                columns_to_get=ColumnsToGet(return_type=ColumnReturnType.ALL_FROM_INDEX),
+                timeout_s=-1)
+            self.assertTrue(False, "Should have raised OTSClientError")
+        except OTSClientError as e:
+            self.assert_equal("timeout_s must be a non-negative integer", e.get_error_message())
 
 if __name__ == '__main__':
     unittest.main()

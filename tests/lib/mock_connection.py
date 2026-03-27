@@ -20,7 +20,7 @@ import tablestore.protobuf.table_store_pb2 as pb2
 
 class MockConnection(object):
 
-    def __init__(self, host, path, timeout=0, maxsize=50):
+    def __init__(self, host, path, timeout=0, maxsize=500):
         self.host = host
         self.path = path
         self.user_key = 'accesskey'

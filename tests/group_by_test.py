@@ -3,6 +3,7 @@
 from tests.lib.api_test_base import APITestBase
 from tablestore import *
 from tablestore.error import *
+from tests.test_utils import make_table_name
 import sys
 import time
 import logging
@@ -13,7 +14,7 @@ class GroupByTest(APITestBase):
     def setUp(self):
         APITestBase.setUp(self)
 
-        self.table_name = 'GroupByTest_' + self.get_python_version()
+        self.table_name = make_table_name('GroupByTest_')
         self.index_name = 'search_index'
         self.rows_count = 100
 
@@ -22,7 +23,7 @@ class GroupByTest(APITestBase):
         self._prepare_data()
 
         print("Wait for preparing the index and data")
-        time.sleep(300)
+        self._wait_search_index_ready(self.table_name, self.index_name, 100)
 
     def _prepare_data(self):
         for i in range(self.rows_count):
@@ -42,6 +43,7 @@ class GroupByTest(APITestBase):
 
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
+        print(f"create_table table_name:{self.table_name}")
         self.client_test.create_table(table_meta, table_options, reserved_throughput)
         self.wait_for_partition_load(self.table_name)
 
@@ -66,7 +68,19 @@ class GroupByTest(APITestBase):
 
         index_setting = IndexSetting(routing_fields=['PK1'])
         index_meta = SearchIndexMeta(fields, index_setting=index_setting, index_sort=None)
+        print(f"create_search_index table_name:{self.table_name} index_name:{self.index_name}")
         self.client_test.create_search_index(self.table_name, self.index_name, index_meta)
+
+    def tearDown(self):
+        try:
+            self.client_test.delete_search_index(self.table_name, self.index_name)
+        except:
+            pass
+        try:
+            self.client_test.delete_table(self.table_name)
+        except:
+            pass
+        APITestBase.tearDown(self)
 
     def test_group_by_field(self):
         # # group by l

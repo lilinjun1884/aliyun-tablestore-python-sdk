@@ -5,6 +5,7 @@ __all__ = ['OTSClient', 'AsyncOTSClient']
 
 import asyncio
 import time
+import json
 import logging
 from abc import ABC
 
@@ -21,7 +22,7 @@ except ImportError:
     import urllib.parse as urlparse
 
 from tablestore.credentials import CredentialsProvider, StaticCredentialsProvider
-from tablestore.auth import SignV2, SignV4
+from tablestore.auth import SignV2, SignV4, SignBase, RequestContext
 from tablestore.protocol import OTSProtocol
 from tablestore.connection import ConnectionPool, AsyncConnectionPool
 from tablestore.metadata import *
@@ -32,7 +33,7 @@ class BaseOTSClient(ABC):
 
     DEFAULT_ENCODING = 'utf8'
     DEFAULT_SOCKET_TIMEOUT = 50
-    DEFAULT_MAX_CONNECTION = 50
+    DEFAULT_MAX_CONNECTION = 500
     DEFAULT_LOGGER_NAME = 'tablestore-client'
 
     def __init__(self, end_point, access_key_id=None, access_key_secret=None, instance_name=None,
@@ -62,17 +63,18 @@ class BaseOTSClient(ABC):
 
         ``socket_timeout`` is the Socket timeout for each connection in the connection pool, measured in seconds. It can be an int or float. The default value is 50.
 
-        ``max_connection`` is the maximum number of connections in the connection pool. The default is 50.
+        ``max_connection`` is the maximum number of connections in the connection pool. The default is 500.
 
         ``logger_name`` is used to log DEBUG logs during requests or ERROR logs when errors occur.
 
         ``retry_policy`` defines the retry policy. The default retry policy is DefaultRetryPolicy. You can inherit from RetryPolicy to implement your own retry policy; please refer to the code of DefaultRetryPolicy.
-
         ``ssl_version`` defines the TLS version used for https connections. The default is None.
 
+        ``enable_native`` specifies whether to use native C/C++ encoder and decoder for better performance. The default is True.
+
+        ``native_fallback`` specifies whether to fall back to the Python implementation when the native encoder/decoder raises an exception. The default is True.
 
         Example: Create an OTSClient instance
-
             from tablestore.client import OTSClient
 
             client = OTSClient('your_instance_endpoint', 'your_user_id', 'your_user_key', 'your_instance_name', region='region')
@@ -90,10 +92,9 @@ class BaseOTSClient(ABC):
         if self.encoding is None:
             self.encoding = OTSClient.DEFAULT_ENCODING
         if region is None:
-            self._signer = SignV2(self.credentials_provider, self.encoding)
+            self._signer: SignBase = SignV2(self.encoding)
         else:
-            self._signer = SignV4(
-                self.credentials_provider,
+            self._signer: SignBase = SignV4(
                 self.encoding,
                 region=region,
                 **kwargs
@@ -121,11 +122,20 @@ class BaseOTSClient(ABC):
                 "host of end_point should be specified, e.g. https://instance.cn-hangzhou.ots.aliyun.com."
             )
 
+        extra_headers = kwargs.get('extra_headers')
+
+        # initialize native codec configuration
+        self.enable_native = kwargs.get('enable_native', True)
+        self.native_fallback = kwargs.get('native_fallback', True)
+
         # initialize protocol instance via user configuration
         self.protocol = OTSProtocol(
             instance_name=instance_name,
             encoding=self.encoding,
-            logger=self.logger
+            logger=self.logger,
+            extra_headers=extra_headers,
+            enable_native=self.enable_native,
+            native_fallback=self.native_fallback,
         )
 
         # initialize connection via user configuration
@@ -191,14 +201,14 @@ class OTSClient(BaseOTSClient):
     def _request_helper(self, api_name, *args, **kwargs):
         # Generate signing key, each request generate once
         # Must generate before making request headers
-        self._signer.gen_signing_key()
-        query, req_headers, req_body = self.protocol.make_request(api_name, self._signer, *args, **kwargs)
+        request_context: RequestContext = RequestContext(self.credentials_provider.get_credentials())
+        query, req_headers, req_body = self.protocol.make_request(api_name, self._signer, request_context, *args, **kwargs)
 
         retry_times = 0
         while True:
             try:
                 status, reason, res_headers, res_body = self.connection.send_receive(query, req_headers, req_body)
-                self.protocol.handle_error(api_name, query, status, reason, res_headers, res_body, self._signer)
+                self.protocol.handle_error(api_name, query, status, reason, res_headers, res_body, self._signer, request_context)
                 break
             except OTSServiceError as e:
                 if self.retry_policy.should_retry(retry_times, e, api_name):
@@ -210,7 +220,44 @@ class OTSClient(BaseOTSClient):
 
         return self.protocol.parse_response(api_name, status, res_headers, res_body)
 
-    def create_table(self, table_meta, table_options, reserved_throughput, secondary_indexes=None):
+    def _vectors_request_helper(self, api_name, request):
+        request_context: RequestContext = RequestContext(self.credentials_provider.get_credentials())
+        try:
+            query, req_headers, req_body = self.protocol.make_json_request(api_name, self._signer, request, request_context)
+        except Exception as e:
+            raise OTSClientError(str(e))
+        retry_times = 0
+        while True:
+            try:
+                status, reason, res_headers, res_body = self.connection.send_receive(query, req_headers, req_body)
+                break
+            except OTSServiceError as e:
+                if self.retry_policy.should_retry(retry_times, e, api_name):
+                    retry_delay = self.retry_policy.get_retry_delay(retry_times, e, api_name)
+                    time.sleep(retry_delay)
+                    retry_times += 1
+                else:
+                    raise e
+
+        request_id = self.protocol._get_request_id_string(res_headers)
+        try:
+            if isinstance(res_body, bytes):
+                res_body_str = res_body.decode('utf-8')
+            else:
+                res_body_str = str(res_body)
+            res_body_json = json.loads(res_body_str)
+
+            if status > 299:
+                code = res_body_json.get('code', 'Unknown')
+                message = res_body_json.get('message', '')
+                raise OTSServiceError(status, code, message, request_id)
+        except (json.JSONDecodeError, TypeError) as je:
+            raise OTSServiceError(status, 'JsonDecodeError', str(je), request_id)
+
+        res_body_json['requestId'] = request_id
+        return res_body_json
+
+    def create_table(self, table_meta, table_options, reserved_throughput, secondary_indexes=None, sse_spec=None):
         """
         Description: Creates a table based on the table information.
 
@@ -219,6 +266,7 @@ class OTSClient(BaseOTSClient):
         ``table_options`` is an instance of the ``tablestore.metadata.TableOptions`` class, which includes three parameters: time_to_live, max_version, and max_time_deviation.
         ``reserved_throughput`` is an instance of the ``tablestore.metadata.ReservedThroughput`` class, representing the reserved read/write throughput.
         ``secondary_indexes`` is an array that can include one or more instances of the ``tablestore.metadata.SecondaryIndexMeta`` class, representing the secondary indexes to be created.
+        ``sse_spec`` is an instance of the ``tablestore.metadata.SSESpecification`` class, which includes four parameters: enable, key_type, key_id, and role_arn.
 
         Return: None.
 
@@ -233,7 +281,7 @@ class OTSClient(BaseOTSClient):
 
         if secondary_indexes is None:
             secondary_indexes = []
-        self._request_helper('CreateTable', table_meta, table_options, reserved_throughput, secondary_indexes)
+        self._request_helper('CreateTable', table_meta, table_options, reserved_throughput, sse_spec, secondary_indexes)
 
     def delete_table(self, table_name):
         """
@@ -386,7 +434,7 @@ class OTSClient(BaseOTSClient):
             primary_key = [('gid',1), ('uid',101)]
             update_of_attribute_columns = {
                 'put' : [('name','Zhang Sanfeng'), ('address','Location B, China')],
-                'delete' : [('mobile', 1493725896147)],
+                'delete' : [('mobile', None, 1493725896147)],
                 'delete_all' : [('age')],
                 'increment' : [('counter', 1)]
             }
@@ -497,7 +545,7 @@ class OTSClient(BaseOTSClient):
     def batch_write_row(self, request):
         """
         Description: Batch modification of multiple rows.
-        request = MiltiTableInBatchWriteRowItem()
+        request = BatchWriteRowRequest()
 
         request.add(TableInBatchWriteRowItem(table0, row_items))
         request.add(TableInBatchWriteRowItem(table1, row_items))
@@ -749,7 +797,7 @@ class OTSClient(BaseOTSClient):
 
         self._request_helper('UpdateSearchIndex', table_name, index_name, index_meta)
 
-    def describe_search_index(self, table_name, index_name):
+    def describe_search_index(self, table_name, index_name, include_sync_stat=True):
         """
         Describe search index.
 
@@ -758,12 +806,15 @@ class OTSClient(BaseOTSClient):
 
         :type index_name: str
         :param index_name: The name of index.
+        
+        :type include_sync_stat: bool
+        :param include_sync_stat: include sync stat. 
 
         Example usage:
-            index_meta = client.describe_search_index('t1', 'index_1')
+            index_meta = client.describe_search_index('t1', 'index_1', False)
         """
 
-        return self._request_helper('DescribeSearchIndex', table_name, index_name)
+        return self._request_helper('DescribeSearchIndex', table_name, index_name, include_sync_stat)
 
     def search(self, table_name, index_name, search_query, columns_to_get=None, routing_keys=None, timeout_s=None):
         """
@@ -971,6 +1022,32 @@ class OTSClient(BaseOTSClient):
     def get_timeseries_data(self, request: GetTimeseriesDataRequest) -> GetTimeseriesDataResponse:
         return self._request_helper('GetTimeseriesData', request)
 
+    def create_knowledge_base(self, request):
+        return self._vectors_request_helper('CreateKnowledgeBase', request)
+
+    def delete_knowledge_base(self, request):
+        return self._vectors_request_helper('DeleteKnowledgeBase', request)
+
+    def describe_knowledge_base(self, request):
+        return self._vectors_request_helper('DescribeKnowledgeBase', request)
+
+    def list_knowledge_base(self, request):
+        return self._vectors_request_helper('ListKnowledgeBase', request)
+
+    def add_documents(self, request):
+        return self._vectors_request_helper('AddDocuments', request)
+
+    def get_document(self, request):
+        return self._vectors_request_helper('GetDocument', request)
+
+    def list_documents(self, request):
+        return self._vectors_request_helper('ListDocuments', request)
+
+    def delete_documents(self, request):
+        return self._vectors_request_helper('DeleteDocuments', request)
+
+    def retrieve(self, request):
+        return self._vectors_request_helper('Retrieve', request)
 
 class AsyncOTSClient(BaseOTSClient):
 
@@ -1019,6 +1096,8 @@ class AsyncOTSClient(BaseOTSClient):
         return self._connection
 
     async def close(self):
+        if self._connection is None:
+            return
         connection = self._connection # prevent concurrency issues in coroutines, if after close, set this value to None, other coroutine may get a closed connection
         self._connection = None
         await connection.close()
@@ -1033,15 +1112,14 @@ class AsyncOTSClient(BaseOTSClient):
         # Generate signing key, each request generate once
         # Must generate before making request headers
         connection = self._get_or_create_connection()
-
-        self._signer.gen_signing_key()
-        query, req_headers, req_body = self.protocol.make_request(api_name, self._signer, *args, **kwargs)
+        request_context: RequestContext = RequestContext(self.credentials_provider.get_credentials())
+        query, req_headers, req_body = self.protocol.make_request(api_name, self._signer, request_context, *args, **kwargs)
 
         retry_times = 0
         while True:
             try:
                 status, reason, res_headers, res_body = await connection.send_receive(query, req_headers, req_body)
-                self.protocol.handle_error(api_name, query, status, reason, res_headers, res_body, self._signer)
+                self.protocol.handle_error(api_name, query, status, reason, res_headers, res_body, self._signer, request_context)
                 break
             except OTSServiceError as e:
                 if self.retry_policy.should_retry(retry_times, e, api_name):
@@ -1053,7 +1131,7 @@ class AsyncOTSClient(BaseOTSClient):
 
         return self.protocol.parse_response(api_name, status, res_headers, res_body)
 
-    async def create_table(self, table_meta, table_options, reserved_throughput, secondary_indexes=None):
+    async def create_table(self, table_meta, table_options, reserved_throughput, secondary_indexes=None, sse_spec=None):
         """
         Description: Creates a table based on the table information.
 
@@ -1062,6 +1140,7 @@ class AsyncOTSClient(BaseOTSClient):
         ``table_options`` is an instance of the ``tablestore.metadata.TableOptions`` class, which includes three parameters: time_to_live, max_version, and max_time_deviation.
         ``reserved_throughput`` is an instance of the ``tablestore.metadata.ReservedThroughput`` class, representing the reserved read/write throughput.
         ``secondary_indexes`` is an array that can include one or more instances of the ``tablestore.metadata.SecondaryIndexMeta`` class, representing the secondary indexes to be created.
+        ``sse_spec`` is an instance of the ``tablestore.metadata.SSESpecification`` class, which includes four parameters: enable, key_type, key_id, and role_arn.
 
         Return: None.
 
@@ -1076,7 +1155,7 @@ class AsyncOTSClient(BaseOTSClient):
 
         if secondary_indexes is None:
             secondary_indexes = []
-        await self._request_helper('CreateTable', table_meta, table_options, reserved_throughput, secondary_indexes)
+        await self._request_helper('CreateTable', table_meta, table_options, reserved_throughput, sse_spec, secondary_indexes)
 
     async def delete_table(self, table_name):
         """
@@ -1229,7 +1308,7 @@ class AsyncOTSClient(BaseOTSClient):
             primary_key = [('gid',1), ('uid',101)]
             update_of_attribute_columns = {
                 'put' : [('name','Zhang Sanfeng'), ('address','Location B, China')],
-                'delete' : [('mobile', 1493725896147)],
+                'delete' : [('mobile', None, 1493725896147)],
                 'delete_all' : [('age')],
                 'increment' : [('counter', 1)]
             }
@@ -1340,7 +1419,7 @@ class AsyncOTSClient(BaseOTSClient):
     async def batch_write_row(self, request):
         """
         Description: Batch modification of multiple rows.
-        request = MiltiTableInBatchWriteRowItem()
+        request = BatchWriteRowRequest()
 
         request.add(TableInBatchWriteRowItem(table0, row_items))
         request.add(TableInBatchWriteRowItem(table1, row_items))
@@ -1592,7 +1671,7 @@ class AsyncOTSClient(BaseOTSClient):
 
         await self._request_helper('UpdateSearchIndex', table_name, index_name, index_meta)
 
-    async def describe_search_index(self, table_name, index_name):
+    async def describe_search_index(self, table_name, index_name, include_sync_stat=True):
         """
         Describe search index.
 
@@ -1601,12 +1680,15 @@ class AsyncOTSClient(BaseOTSClient):
 
         :type index_name: str
         :param index_name: The name of index.
+        
+        :type include_sync_stat: bool
+        :param include_sync_stat: include sync stat. 
 
         Example usage:
-            index_meta = await client.describe_search_index('t1', 'index_1')
+            index_meta = client.describe_search_index('t1', 'index_1', False)
         """
 
-        return await self._request_helper('DescribeSearchIndex', table_name, index_name)
+        return await self._request_helper('DescribeSearchIndex', table_name, index_name, include_sync_stat)
 
     async def search(self, table_name, index_name, search_query, columns_to_get=None, routing_keys=None, timeout_s=None):
         """
@@ -1814,3 +1896,4 @@ class AsyncOTSClient(BaseOTSClient):
 
     async def get_timeseries_data(self, request: GetTimeseriesDataRequest) -> GetTimeseriesDataResponse:
         return await self._request_helper('GetTimeseriesData', request)
+

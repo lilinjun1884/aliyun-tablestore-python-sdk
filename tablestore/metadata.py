@@ -10,11 +10,11 @@ from tablestore.protobuf import search_pb2
 
 class TableMeta(DefaultJsonObject):
 
-    def __init__(self, table_name, schema_of_primary_key, defined_columns=[]):
+    def __init__(self, table_name, schema_of_primary_key, defined_columns=None):
         # schema_of_primary_key: [('PK0', 'STRING'), ('PK1', 'INTEGER'), ...]
         self.table_name = table_name
         self.schema_of_primary_key = schema_of_primary_key
-        self.defined_columns = defined_columns
+        self.defined_columns = [] if defined_columns is None else defined_columns[:]
 
 
 class TableOptions(DefaultJsonObject):
@@ -24,6 +24,42 @@ class TableOptions(DefaultJsonObject):
         self.max_time_deviation = max_time_deviation
         self.allow_update = allow_update
 
+
+class SSEKeyType(object):
+    SSE_KMS_SERVICE = 1
+    SSE_BYOK = 2
+
+
+class SSESpecification(DefaultJsonObject):
+    def __init__(self, enable=False, key_type=None, key_id=None, role_arn=None):
+        self.enable = enable
+        self.key_type = key_type
+        self.key_id = key_id
+        self.role_arn = role_arn
+        self.check_arguments()
+
+    def check_arguments(self):
+        if self.enable:
+            if self.key_type is None:
+                raise OTSClientError("key type is required when enable is true")
+            else:
+                if self.key_type != SSEKeyType.SSE_BYOK and \
+                        (self.key_id is not None or self.role_arn is not None):
+                    raise OTSClientError("key id and role arn cannot be set when key type is not SSE_BYOK")
+                if self.key_type != SSEKeyType.SSE_KMS_SERVICE and \
+                        (self.key_id is None or self.role_arn is None):
+                    raise OTSClientError("key id and role arn are required when key type is not SSE_KMS_SERVICE")
+        else:
+            if self.key_type is not None:
+                raise OTSClientError("key type cannot be set when enable is false")
+
+
+class SSEDetails(DefaultJsonObject):
+    def __init__(self, enable=False, key_type=None, key_id=None, role_arn=None):
+        self.enable = enable
+        self.key_type = key_type
+        self.key_id = key_id
+        self.role_arn = role_arn
 
 class CapacityUnit(DefaultJsonObject):
 
@@ -56,6 +92,7 @@ class FieldType(IntEnum):
     GEOPOINT = search_pb2.GEO_POINT
     DATE = search_pb2.DATE
     VECTOR = search_pb2.VECTOR
+    JSON = search_pb2.JSON
 
 
 class AnalyzerType(object):
@@ -158,8 +195,8 @@ class Sort(DefaultJsonObject):
 
 class IndexSetting(DefaultJsonObject):
 
-    def __init__(self, routing_fields=[]):
-        self.routing_fields = routing_fields
+    def __init__(self, routing_fields=None):
+        self.routing_fields = [] if routing_fields is None else routing_fields[:]
 
 
 class VectorDataType(IntEnum):
@@ -180,13 +217,23 @@ class VectorOptions(DefaultJsonObject):
         self.dimension = dimension
 
 
+class JsonType(IntEnum):
+    OBJECT_JSON = search_pb2.OBJECT_JSON
+    NESTED_JSON = search_pb2.NESTED_JSON
+
+
+class TextSimilarity(IntEnum):
+    BM25 = search_pb2.BM25
+    SHORT_TEXT = search_pb2.SHORT_TEXT
+
+
 class FieldSchema(DefaultJsonObject):
 
     def __init__(self, field_name, field_type, index=None,
                  store=None, is_array=None, enable_sort_and_agg=None,
-                 analyzer=None, sub_field_schemas=[], analyzer_parameter=None,
-                 date_formats=[], is_virtual_field=False, source_fields=[], vector_options=None,
-                 enable_highlighting=None):
+                 analyzer=None, sub_field_schemas=None, analyzer_parameter=None,
+                 date_formats=None, is_virtual_field=False, source_fields=None, vector_options=None,
+                 enable_highlighting=None, json_type=None, text_similarity=None):
         self.field_name = field_name
         self.field_type = field_type
         self.index = index
@@ -195,12 +242,14 @@ class FieldSchema(DefaultJsonObject):
         self.enable_sort_and_agg = enable_sort_and_agg
         self.analyzer = analyzer
         self.analyzer_parameter = analyzer_parameter
-        self.sub_field_schemas = sub_field_schemas
-        self.date_formats = date_formats
+        self.sub_field_schemas = [] if sub_field_schemas is None else sub_field_schemas[:]
+        self.date_formats = [] if date_formats is None else date_formats[:]
         self.is_virtual_field = is_virtual_field
-        self.source_fields = source_fields
+        self.source_fields = [] if source_fields is None else source_fields[:]
         self.vector_options = vector_options
         self.enable_highlighting = enable_highlighting
+        self.json_type = json_type
+        self.text_similarity = text_similarity
 
 
 class SyncPhase(IntEnum):
@@ -313,11 +362,12 @@ class UpdateTableResponse(CommonResponse):
 
 class DescribeTableResponse(CommonResponse):
 
-    def __init__(self, table_meta, table_options, reserved_throughput_details, secondary_indexes=[]):
+    def __init__(self, table_meta, table_options, reserved_throughput_details, secondary_indexes=None, sse_details=None):
         self.table_meta = table_meta
         self.table_options = table_options
         self.reserved_throughput_details = reserved_throughput_details
-        self.secondary_indexes = secondary_indexes
+        self.sse_details = sse_details
+        self.secondary_indexes = [] if secondary_indexes is None else secondary_indexes[:]
 
 
 class RowDataItem(DefaultJsonObject):
@@ -693,7 +743,7 @@ class Condition(DefaultJsonObject):
         self.column_condition = column_condition
 
     def get_column_condition(self):
-        self.column_condition
+        return self.column_condition
 
 
 class Row(DefaultJsonObject):
@@ -980,6 +1030,7 @@ class QueryType(IntEnum):
     GEO_POLYGON_QUERY = search_pb2.GEO_POLYGON_QUERY
     TERMS_QUERY = search_pb2.TERMS_QUERY
     KNN_VECTOR_QUERY = search_pb2.KNN_VECTOR_QUERY
+    DIS_MAX_QUERY = search_pb2.DIS_MAX_QUERY
 
 
 class QueryOperator(IntEnum):
@@ -1005,10 +1056,11 @@ class MatchQuery(Query):
 
 class MatchPhraseQuery(Query):
 
-    def __init__(self, field_name, text, weight=None):
+    def __init__(self, field_name, text, weight=None, slop=None):
         self.field_name = field_name
         self.text = text
         self.weight = weight
+        self.slop = slop
 
 class MatchAllQuery(Query):
 
@@ -1060,13 +1112,14 @@ class WildcardQuery(Query):
 
 class BoolQuery(Query):
 
-    def __init__(self, must_queries=[], must_not_queries=[],
-                 filter_queries=[], should_queries=[], minimum_should_match=None):
-        self.must_queries = must_queries
-        self.must_not_queries = must_not_queries
-        self.filter_queries = filter_queries
-        self.should_queries = should_queries
+    def __init__(self, must_queries=None, must_not_queries=None,
+                 filter_queries=None, should_queries=None, minimum_should_match=None, weight=None):
+        self.must_queries = [] if must_queries is None else must_queries[:]
+        self.must_not_queries = [] if must_not_queries is None else must_not_queries[:]
+        self.filter_queries = [] if filter_queries is None else filter_queries[:]
+        self.should_queries = [] if should_queries is None else should_queries[:]
         self.minimum_should_match = minimum_should_match
+        self.weight = weight
 
 
 class NestedQuery(Query):
@@ -1144,11 +1197,22 @@ class ExistsQuery(Query):
 
 class KnnVectorQuery(Query):
 
-    def __init__(self, field_name, top_k=None, float32_query_vector=None, filter=None, weight=None):
+    def __init__(self, field_name, top_k=None, float32_query_vector=None, filter=None, weight=None, min_score=None,
+                 num_candidates=None):
         self.field_name = field_name
         self.top_k = top_k
         self.float32_query_vector = float32_query_vector
         self.filter = filter
+        self.weight = weight
+        self.min_score = min_score
+        self.num_candidates = num_candidates
+
+
+class DisMaxQuery(Query):
+
+    def __init__(self, queries=None, tie_breaker=None, weight=None):
+        self.queries = [] if queries is None else queries
+        self.tie_breaker = tie_breaker
         self.weight = weight
 
 
@@ -1220,8 +1284,8 @@ class ColumnReturnType(IntEnum):
 
 class ColumnsToGet(DefaultJsonObject):
 
-    def __init__(self, column_names=[], return_type=ColumnReturnType.NONE):
-        self.column_names = column_names
+    def __init__(self, column_names=None, return_type=ColumnReturnType.NONE):
+        self.column_names = [] if column_names is None else column_names[:]
         self.return_type = return_type
 
 

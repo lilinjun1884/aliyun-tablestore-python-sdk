@@ -108,11 +108,31 @@ message StreamDetails {
     optional int64 last_enable_time = 4;
 }
 
+enum SSEKeyType {
+    SSE_KMS_SERVICE = 1;
+    SSE_BYOK = 2;
+}
+
+message SSESpecification {
+    required bool enable = 1;
+    optional SSEKeyType key_type = 2;
+    optional bytes key_id = 3; // only useful when key_type is SSE_BYOK
+    optional bytes role_arn = 4; // only useful when key_type is SSE_BYOK
+}
+
+message SSEDetails {
+    required bool enable = 1;
+    optional SSEKeyType key_type = 2;
+    optional bytes key_id = 3;
+    optional bytes role_arn = 4; // only useful when key_type is SSE_BYOK
+}
+
 message CreateTableRequest {
     required TableMeta table_meta = 1;
     required ReservedThroughput reserved_throughput = 2; 
     optional TableOptions table_options = 3;
     optional StreamSpecification stream_spec = 5;
+    optional SSESpecification sse_spec = 6;
     repeated IndexMeta index_metas = 7;
 }
 
@@ -158,6 +178,7 @@ message DescribeTableResponse {
     required TableOptions table_options = 3;
     optional StreamDetails stream_details = 5;
     repeated bytes shard_splits = 6;
+    optional SSEDetails sse_details = 7;
     repeated IndexMeta index_metas = 8;
 }
 message ListTableRequest {

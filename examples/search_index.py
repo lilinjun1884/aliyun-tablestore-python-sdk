@@ -264,6 +264,36 @@ def nested_query(table_name, index_name):
     print('********** End NestedQuery **********\n')
 
 
+def query_with_json_field(table_name, index_name):
+    print('********** Begin QueryWithJsonField **********\n')
+
+    # json_object: Simply concatenate the parent field name and the child field name to perform the query
+    print('**** Begin QueryWithObjectTypeJson ***')
+
+    query = TermQuery('json_object.object_k', 'key000')
+    search_response = client.search(table_name, index_name,
+                                    SearchQuery(query, limit=100, get_total_count=True),
+                                    ColumnsToGet(return_type=ColumnReturnType.ALL))
+
+    _print_rows(search_response.request_id, search_response.rows, search_response.total_count)
+
+    print('**** End QueryWithObjectTypeJson ***')
+
+    # json_nested: Need to use nestedQuery for packaging and fill in the path information
+    print('**** Begin QueryWithJsonNested ****')
+
+    nested_query = RangeQuery('json_nested.nested_l', range_from=110, range_to=200, include_lower=True,
+                              include_upper=True)
+    query = NestedQuery('json_nested', nested_query)
+    search_response = client.search(table_name, index_name,
+                                    SearchQuery(query, limit=100, get_total_count=True),
+                                    ColumnsToGet(return_type=ColumnReturnType.ALL))
+
+    _print_rows(search_response.request_id, search_response.rows, search_response.total_count)
+
+    print('**** End QueryWithJsonNested ****')
+
+
 def prepare_data(rows_count):
     print('Begin prepare data: %d' % rows_count)
     for i in range(rows_count):
@@ -274,7 +304,11 @@ def prepare_data(rows_count):
                 ('g', '%f,%f' % (30.0 + 0.05 * lj, 114.0 + 0.05 * li)), ('ka', '["a", "b", "%d"]' % i),
                 ('la', '[-1, %d]' % i), ('l', i), ('phone', '177712345%d78' % (i % 10)),
                 ('b', i % 2 == 0), ('d', 0.1), ('time', '2022-05-%d' % (i % 31 + 1)),
-                ('n', json.dumps([{'nk': 'key%03d' % i, 'nl': i, 'nt': 'this is in nested ' + str(i)}]))
+                ('n', json.dumps([{'nk': 'key%03d' % i, 'nl': i, 'nt': 'this is in nested ' + str(i)}])),
+                ('json_nested', json.dumps(
+                    [{'nested_k': 'key%03d' % i, 'nested_l': i, 'nested_nt': 'this is in json_nested ' + str(i)}])),
+                ('json_object', json.dumps(
+                    [{'object_k': 'key%03d' % i, 'object_l': i, 'object_nt': 'this is in json_object ' + str(i)}]))
                 ]
 
         client.put_row(table_name, Row(pk, cols))
@@ -312,18 +346,27 @@ def prepare_index(index_name, with_nested=False):
     field_j = FieldSchema('phone', FieldType.TEXT, index=True, store=True, analyzer=AnalyzerType.FUZZY,
                           analyzer_parameter=FuzzyAnalyzerParameter(1, 6))
     field_vl = FieldSchema('vl', FieldType.KEYWORD, index=True, store=True, is_virtual_field=True, source_fields=['l'])
+    field_json_object = FieldSchema('json_object', FieldType.JSON, json_type=JsonType.OBJECT_JSON, sub_field_schemas=[
+        FieldSchema('object_k', FieldType.KEYWORD, index=True, store=True),
+        FieldSchema('object_l', FieldType.LONG, index=True, store=True),
+    ])
+
+    fields = [field_a, field_a2, field_b, field_c, field_d, field_e, field_f, field_g,
+              field_h, field_i, field_j, field_vl, field_json_object]
 
     if with_nested:
         field_n = FieldSchema('n', FieldType.NESTED, sub_field_schemas=[
             FieldSchema('nk', FieldType.KEYWORD, index=True, store=True),
             FieldSchema('nl', FieldType.LONG, index=True, store=True)
         ])
-
-    fields = [field_a, field_a2, field_b, field_c, field_d, field_e, field_f, field_g,
-              field_h, field_i, field_j, field_vl]
-
-    if with_nested:
+        field_json_nested = FieldSchema('json_nested', FieldType.JSON, json_type=JsonType.NESTED_JSON,
+                                        sub_field_schemas=[
+                                            FieldSchema('nested_k', FieldType.KEYWORD, index=True, store=True),
+                                            FieldSchema('nested_l', FieldType.LONG, index=True, store=True)
+                                        ])
         fields.append(field_n)
+        fields.append(field_json_nested)
+
     index_setting = IndexSetting(routing_fields=['PK1'])
     index_sort = Sort(sorters=[PrimaryKeySort(SortOrder.ASC)]) if not with_nested else None
     index_meta = SearchIndexMeta(fields, index_setting=index_setting, index_sort=index_sort,
@@ -417,6 +460,7 @@ if __name__ == '__main__':
     range_time_query(table_name, index_name)
     fuzzy_query(table_name, index_name)
     collapse_query(table_name, index_name)
+    query_with_json_field(table_name, nested_index_name) # using json fieldType
 
     delete_search_index(index_name)
     delete_search_index(nested_index_name)

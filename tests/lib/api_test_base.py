@@ -1,5 +1,5 @@
 #*-coding:utf-8-*-
-
+import tablestore
 from tablestore.credentials import StaticCredentialsProvider
 
 from . import test_config
@@ -25,7 +25,9 @@ def get_no_retry_client():
                                 test_config.OTS_INSTANCE,
                                 region=test_config.OTS_REGION,
                                 logger_name='APITestBase',
-                                retry_policy=NoRetryPolicy())
+                                retry_policy=NoRetryPolicy(),
+                                enable_native=test_config.OTS_ENABLE_NATIVE,
+                                native_fallback=test_config.OTS_NATIVE_FALLBACK)
     return no_retry_client
 
 
@@ -57,7 +59,31 @@ class APITestBase(TestCase):
         except Exception as e:
             pass
 
+    def _wait_search_index_ready(
+            self,
+            table_name: str,
+            index_name: str,
+            total_count: int
+    ) -> None:
+        max_wait_time = 300
+        interval_time = 1
+        start_time = time.time()
+        while max_wait_time > 0:
+            search_response = self.client_test.search(
+                table_name=table_name,
+                index_name=index_name,
+                search_query=tablestore.SearchQuery(tablestore.MatchAllQuery(), limit=0, get_total_count=True),
+                columns_to_get=tablestore.ColumnsToGet(return_type=tablestore.ColumnReturnType.NONE),
+            )
+            if search_response.total_count == total_count:
+                print(f'table:[{table_name}] search index:[{index_name}] ready! use time:{time.time() - start_time}')
+                return
+            time.sleep(interval_time)
+            max_wait_time = max_wait_time - interval_time
+        assert False, f'table:[{table_name}] search index:[{index_name}] is not ready!! use time:{time.time() - start_time}'
+
     def setUp(self):
+        print("base api setUp")
         if random.choice([True, False]):
             self.logger.info("use credentials_provider")
             self.client_test = OTSClient(
@@ -66,6 +92,8 @@ class APITestBase(TestCase):
                 credentials_provider=StaticCredentialsProvider(test_config.OTS_ACCESS_KEY_ID, test_config.OTS_ACCESS_KEY_SECRET),
                 logger_name='APITestBase',
                 retry_policy=DefaultRetryPolicy(),
+                enable_native=test_config.OTS_ENABLE_NATIVE,
+                native_fallback=test_config.OTS_NATIVE_FALLBACK,
             )
         else:
             self.client_test = OTSClient(
@@ -75,6 +103,8 @@ class APITestBase(TestCase):
                 test_config.OTS_INSTANCE,
                 logger_name='APITestBase',
                 retry_policy=DefaultRetryPolicy(),
+                enable_native=test_config.OTS_ENABLE_NATIVE,
+                native_fallback=test_config.OTS_NATIVE_FALLBACK,
             )
         self.delete_table_and_index()
         time.sleep(1)  # to avoid too frequent table operations
@@ -91,14 +121,14 @@ class APITestBase(TestCase):
         self.logger.warning("\nAssertion Failed\n" + "".join(traceback.format_stack()))
         raise AssertionError
 
-    def assert_equal(self, res, expect_res):
+    def assert_equal(self, res, expect_res, msg=None):
         if isinstance(res, six.binary_type):
             res = res.decode('utf-8')
         if isinstance(expect_res, six.binary_type):
             expect_res = expect_res.decode('utf-8')
 
         if res != expect_res:
-            self.assertEqual(res, expect_res)
+            self.assertEqual(res, expect_res, msg)
 
     def try_exhaust_cu(self, func, count, read_cu, write_cu):
         i = 0
@@ -297,28 +327,9 @@ class APITestBase(TestCase):
         self.assert_DescribeTableResponse(
             describe_response, reserved_throughput.capacity_unit, table_meta, table_options)
 
-    def wait_for_capacity_unit_update(self, table_name):
-        print("Wait for updating capacity unit")
-        time.sleep(60)
-
     def wait_for_partition_load(self, table_name, instance_name=""):
-        print("Wait for loading partition")
+        print(f"Wait for loading partition table_name:{table_name}")
         time.sleep(2)
-
-    def wait_for_search_index_ready(self, client, table_name, index_name):
-        max_wait_time = 400
-        interval_time = 20
-
-        while max_wait_time > 0:
-            index_meta, sync_stat = client.describe_search_index(table_name, index_name)
-
-            if sync_stat.sync_phase == SyncPhase.INCR:
-                delta_time = time.time() - sync_stat.current_sync_timestamp/1000/1000/1000
-                if delta_time < 20:
-                    print('Search Index Ready!')
-                    return
-            time.sleep(interval_time)
-            max_wait_time = max_wait_time - interval_time
 
     def get_primary_keys(self, pk_cnt, pk_type, pk_name="PK", pk_value="x"):
         pk_schema = []

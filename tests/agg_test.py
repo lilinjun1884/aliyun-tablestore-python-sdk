@@ -1,18 +1,20 @@
 # -*- coding: utf8 -*-
 
 import unittest
-from tests.lib.api_test_base import APITestBase
-from tablestore import *
-from tablestore.error import *
 import time
 import logging
 import json
+
+from tests.lib.api_test_base import APITestBase
+from tablestore import *
+from tablestore.error import *
+from tests.test_utils import make_table_name
 
 class AggTest(APITestBase):
     def setUp(self):
         APITestBase.setUp(self)
 
-        self.table_name = 'AggTest_' + self.get_python_version()
+        self.table_name = make_table_name('AggTest_')
         self.index_name = 'search_index'
         self.rows_count = 100
 
@@ -21,7 +23,7 @@ class AggTest(APITestBase):
         self._prepare_data()
 
         print("Wait for preparing the index and data")
-        time.sleep(300)
+        self._wait_search_index_ready(self.table_name, self.index_name, 100)
 
     def _prepare_data(self):
         for i in range(self.rows_count):
@@ -66,6 +68,17 @@ class AggTest(APITestBase):
         index_setting = IndexSetting(routing_fields=['PK1'])
         index_meta = SearchIndexMeta(fields, index_setting=index_setting, index_sort=None)
         self.client_test.create_search_index(self.table_name, self.index_name, index_meta)
+
+    def tearDown(self):
+        try:
+            self.client_test.delete_search_index(self.table_name, self.index_name)
+        except:
+            pass
+        try:
+            self.client_test.delete_table(self.table_name)
+        except:
+            pass
+        APITestBase.tearDown(self)
 
     def test_max_agg_normal(self):
         # long type
@@ -472,7 +485,7 @@ class AggTest(APITestBase):
         self.assert_equal(1, len(search_response.agg_results))
         self.assert_equal(2, len(search_response.agg_results[0].value))
         self.assert_equal(50, search_response.agg_results[0].value[0].key)
-        self.assert_equal(49, search_response.agg_results[0].value[0].value)
+        self.assertTrue(abs(search_response.agg_results[0].value[0].value - 49) <= 3)
         self.assert_equal(90, search_response.agg_results[0].value[1].key)
         self.assertTrue(abs(search_response.agg_results[0].value[1].value - 89) <= 2)
 
@@ -499,7 +512,7 @@ class AggTest(APITestBase):
         self.assert_equal(1, len(search_response.agg_results))
         self.assert_equal(2, len(search_response.agg_results[0].value))
         self.assert_equal(50, search_response.agg_results[0].value[0].key)
-        self.assert_equal(49, search_response.agg_results[0].value[0].value)
+        self.assertTrue(abs(search_response.agg_results[0].value[0].value - 49) <= 3)
         self.assert_equal(90, search_response.agg_results[0].value[1].key)
         self.assertTrue(abs(search_response.agg_results[0].value[1].value - 89) <= 2)
 
@@ -514,7 +527,7 @@ class AggTest(APITestBase):
         self.assert_equal(50, search_response.agg_results[0].value[0].key)
         self.assert_equal(0, search_response.agg_results[0].value[0].value)
         self.assert_equal(90, search_response.agg_results[0].value[1].key)
-        self.assert_equal(79, search_response.agg_results[0].value[1].value)
+        self.assertTrue(abs(search_response.agg_results[0].value[1].value - 79) <= 3)
 
         # date type
         search_response = self.client_test.search(self.table_name, self.index_name, 

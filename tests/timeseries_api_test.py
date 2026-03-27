@@ -1,28 +1,33 @@
 # -*- coding: utf8 -*-
 import unittest
 
-
 from tests.lib.api_test_base import APITestBase
 import time
 from tablestore import metadata
+from tests.test_utils import make_table_name
 
 
 class TimeseriesApiTest(APITestBase):
     """TimeseriesApiTest"""
 
+    def setUp(self):
+        APITestBase.setUp(self)
+        self.table_name_1 = make_table_name('python_sdk_test')
+        self.table_name_2 = make_table_name('python_sdk_test_2')
+        self.table_name_3 = make_table_name('python_sdk_nt_test')
+        self.table_name_4 = make_table_name('python_sdk_definekey_test')
+
+    def tearDown(self):
+        for t in [self.table_name_1, self.table_name_2, self.table_name_3, self.table_name_4]:
+            try:
+                self.client_test.delete_timeseries_table(t)
+            except:
+                pass
+        APITestBase.tearDown(self)
+
     def test_timeseries_api(self):
         client = self.client_test
-        prefix = "python_sdk_test"
-        table_name = prefix + str(int(time.time()))
-
-        try:
-            # Clean up the environment
-            b = client.list_timeseries_table()
-            for item in b:
-                if item.timeseries_table_name.startswith(prefix):
-                    client.delete_timeseries_table(item.timeseries_table_name)
-        except Exception as e:
-            print(e)
+        table_name = self.table_name_1
 
         print("start to sleep")
         time.sleep(25)
@@ -80,7 +85,7 @@ class TimeseriesApiTest(APITestBase):
 
         client.delete_timeseries_table(table_name)
 
-        table_name = prefix + str(int(time.time()))
+        table_name = self.table_name_2
         meta = metadata.TimeseriesTableMeta(table_name)
         meta.timeseries_table_options = metadata.TimeseriesTableOptions(172800)
         request = metadata.CreateTimeseriesTableRequest(meta)
@@ -197,17 +202,7 @@ class TimeseriesApiTest(APITestBase):
 
     def test_timeseries_getdata_nexttoken_test(self):
         client = self.client_test
-        prefix = "python_sdk_nt_test"
-        table_name = prefix + str(int(time.time()))
-
-        try:
-            # Clean up the environment
-            b = client.list_timeseries_table()
-            for item in b:
-                if item.timeseries_table_name.startswith(prefix):
-                    client.delete_timeseries_table(item.timeseries_table_name)
-        except Exception as e:
-            print(e)
+        table_name = self.table_name_3
 
         meta = metadata.TimeseriesTableMeta(table_name, metadata.TimeseriesTableOptions(172800))
         request = metadata.CreateTimeseriesTableRequest(meta)
@@ -238,17 +233,7 @@ class TimeseriesApiTest(APITestBase):
 
     def test_user_define_primary_key(self):
         client = self.client_test
-        prefix = "python_sdk_definekey_test"
-        table_name = prefix + str(int(time.time()))
-
-        try:
-            # Clean up the environment
-            b = client.list_timeseries_table()
-            for item in b:
-                if item.timeseries_table_name.startswith(prefix):
-                    client.delete_timeseries_table(item.timeseries_table_name)
-        except Exception as e:
-            print(e)
+        table_name = self.table_name_4
 
         tableOptitable_optionn = metadata.TimeseriesTableOptions(172800)
         meta_option = metadata.TimeseriesMetaOptions(None, False)

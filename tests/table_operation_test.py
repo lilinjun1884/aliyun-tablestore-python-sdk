@@ -6,14 +6,48 @@ from tests.lib.api_test_base import APITestBase
 from tests.lib.api_test_base import get_no_retry_client
 from tablestore import *
 from tablestore.error import *
+from tests.test_utils import make_table_name
 
 
 class TableOperationTest(APITestBase):
     """Table-level operation test"""
 
+    def setUp(self):
+        super(TableOperationTest, self).setUp()
+        self.table_name_delete_existing = make_table_name('table_test_delete_existing')
+        self.table_name_already_exist = make_table_name('table_test_already_exist')
+        self.table_name_sequence = make_table_name('table_test_sequence')
+        self.table_name_duplicate_PK = make_table_name('table_test_duplicate_PK')
+        self.table_name_PK_option = make_table_name('table_PK_option')
+        self.table_name_PK_type = make_table_name('table_PK_type')
+        self.table_name_create_again = make_table_name('table_create_again')
+        self.table_name_1_CU_mess_up = make_table_name('table1_CU_mess_up_test')
+        self.table_name_2_CU_mess_up = make_table_name('table2_CU_mess_up_test')
+        self.table_name_with_index = make_table_name('table_with_index')
+
+    def tearDown(self):
+        tables_to_delete = [
+            self.table_name_delete_existing,
+            self.table_name_already_exist,
+            self.table_name_sequence,
+            self.table_name_duplicate_PK,
+            self.table_name_PK_option,
+            self.table_name_PK_type,
+            self.table_name_create_again,
+            self.table_name_1_CU_mess_up,
+            self.table_name_2_CU_mess_up,
+            self.table_name_with_index,
+        ]
+        for t in tables_to_delete:
+            try:
+                self.client_test.delete_table(t)
+            except:
+                pass
+        APITestBase.tearDown(self)
+
     def test_delete_existing_table(self):
         """Delete an existing table, expect success, use list_table() to confirm the table has been deleted, and describe_table() returns an exception: OTSObjectNotExist."""
-        table_name = 'table_test_delete_existing' + self.get_python_version()
+        table_name = self.table_name_delete_existing
         table_meta = TableMeta(table_name, [('PK0', 'STRING'), ('PK1', 'INTEGER')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -29,7 +63,7 @@ class TableOperationTest(APITestBase):
 
     def test_create_table_already_exist(self):
         """Create a table with a name that duplicates an existing table, expect to return ErrorCode: OTSObjectAlreadyExist, confirm there are no two tables with the same name using list_table()"""
-        table_name = 'table_test_already_exist' + self.get_python_version()
+        table_name = self.table_name_already_exist
         table_meta = TableMeta(table_name, [('PK0', 'STRING'), ('PK1', 'INTEGER')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -47,7 +81,7 @@ class TableOperationTest(APITestBase):
 
     def test_create_table_with_sequence(self):
         """Create a table, the impact of PK order"""
-        table_name = 'table_test_sequence' + self.get_python_version()
+        table_name = self.table_name_sequence
         table_meta = TableMeta(table_name, [('PK9', 'STRING'), ('PK1', 'INTEGER'), ('PK3', 'BINARY')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -58,7 +92,7 @@ class TableOperationTest(APITestBase):
 
     def test_duplicate_PK_name_in_table_meta(self):
         """When creating a table, there are 2 PK columns in TableMeta with duplicate column names. Expected to return OTSParameterInvalid, and confirm that this table does not exist using list_table()"""
-        table_name = 'table_test_duplicate_PK' + self.get_python_version()
+        table_name = self.table_name_duplicate_PK
         table_meta = TableMeta(table_name, [('PK0', 'STRING'), ('PK0', 'INTEGER')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -72,7 +106,7 @@ class TableOperationTest(APITestBase):
 
     def test_PK_option(self):
         """Test the default value, custom value, and value update of table_option"""
-        table_name = 'table_PK_option' + self.get_python_version()
+        table_name = self.table_name_PK_option
         table_meta = TableMeta(table_name, [('PK0', 'INTEGER'), ('PK1', 'INTEGER'), ('PK2', 'INTEGER')])
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
 
@@ -96,10 +130,10 @@ class TableOperationTest(APITestBase):
         describe_response = self.client_test.describe_table(table_name)
         self.assert_DescribeTableResponse(describe_response, reserved_throughput.capacity_unit, table_meta,
                                           table_options_update)
-
+        
     def test_PK_type(self):
         """Test the types of PK columns, including STRING type, INTEGER type, BINARY type, and invalid types."""
-        table_name = 'table_PK_type' + self.get_python_version()
+        table_name = self.table_name_PK_type
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
 
@@ -132,7 +166,7 @@ class TableOperationTest(APITestBase):
         """
         Create a table, set CU (1, 1), delete it, then create a table with the same name but different PK, set CU to (2, 2), and verify the operation of CU.
         """
-        table_name = 'table_create_again' + self.get_python_version()
+        table_name = self.table_name_create_again
         table_meta = TableMeta(table_name, [('PK0', 'INTEGER'), ('PK1', 'STRING')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(1, 1))
@@ -142,7 +176,7 @@ class TableOperationTest(APITestBase):
         table_meta_new = TableMeta(table_name, [('PK0_new', 'INTEGER'), ('PK1', 'STRING')])
         reserved_throughput_new = ReservedThroughput(CapacityUnit(2, 2))
         self.client_test.create_table(table_meta_new, table_options, reserved_throughput_new)
-        self.wait_for_partition_load('table_create_again')
+        self.wait_for_partition_load(table_name)
 
         describe_response = self.client_test.describe_table(table_name)
         self.assert_DescribeTableResponse(
@@ -152,13 +186,13 @@ class TableOperationTest(APITestBase):
         pk_dict_not_exist = [('PK0_new', 5), ('PK1', '2')]
         self.check_CU_by_consuming(
             table_name, pk_dict_exist, pk_dict_not_exist, reserved_throughput_new.capacity_unit)
-
+        
     def test_CU_not_messed_up_with_two_tables(self):
         """Create two tables, set CU to (1, 2) and (2, 1) respectively, operate to verify CU, use describe_table() to confirm the settings are successful."""
-        table_name_1 = 'table1_CU_mess_up_test' + self.get_python_version()
+        table_name_1 = self.table_name_1_CU_mess_up
         table_meta_1 = TableMeta(table_name_1, [('PK0', 'STRING'), ('PK1', 'STRING')])
         reserved_throughput_1 = ReservedThroughput(CapacityUnit(1, 2))
-        table_name_2 = 'table2_CU_mess_up_test' + self.get_python_version()
+        table_name_2 = self.table_name_2_CU_mess_up
         table_meta_2 = TableMeta(table_name_2, [('PK0', 'STRING'), ('PK1', 'STRING')])
         reserved_throughput_2 = ReservedThroughput(CapacityUnit(2, 1))
         pk_dict_exist = [('PK0', 'a'), ('PK1', '1')]
@@ -166,8 +200,8 @@ class TableOperationTest(APITestBase):
         table_options = TableOptions()
         self.client_test.create_table(table_meta_1, table_options, reserved_throughput_1)
         self.client_test.create_table(table_meta_2, table_options, reserved_throughput_2)
-        self.wait_for_partition_load('table1_CU_mess_up_test')
-        self.wait_for_partition_load('table2_CU_mess_up_test')
+        self.wait_for_partition_load(table_name_1)
+        self.wait_for_partition_load(table_name_2)
 
         describe_response_1 = self.client_test.describe_table(table_name_1)
         self.assert_DescribeTableResponse(
@@ -179,11 +213,11 @@ class TableOperationTest(APITestBase):
             describe_response_2, reserved_throughput_2.capacity_unit, table_meta_2, table_options)
         self.check_CU_by_consuming(
             table_name_2, pk_dict_exist, pk_dict_not_exist, reserved_throughput_2.capacity_unit)
-
+        
     def test_create_table_with_CU(self):
         """Create a table, CU is from (0, 0) to (1, 1), and confirm the settings are successful with describe_table()"""
         for (i, j) in [(0, 0), (0, 1), (1, 0), (1, 1)]:
-            table_name = 'table_cu_' + str(i) + '_' + str(j) + self.get_python_version()
+            table_name = make_table_name('table_cu_' + str(i) + '_' + str(j))
             table_meta = TableMeta(table_name, [('PK0', 'STRING'), ('PK1', 'STRING')])
             table_options = TableOptions()
             reserved_throughput = ReservedThroughput(CapacityUnit(i, j))
@@ -194,6 +228,7 @@ class TableOperationTest(APITestBase):
             self.assert_DescribeTableResponse(
                 describe_response, reserved_throughput.capacity_unit, table_meta, table_options)
             time.sleep(0.5)
+            self.client_test.delete_table(table_name)
 
     def _assert_index_meta(self, expect_index, actual_index):
         self.assert_equal(expect_index.index_name, actual_index.index_name)
@@ -203,7 +238,7 @@ class TableOperationTest(APITestBase):
 
     def test_create_table_with_secondary_index(self):
         """Test creating a table with secondary indexes"""
-        table_name = 'table_with_index' + self.get_python_version()
+        table_name = self.table_name_with_index
         schema_of_primary_key = [('gid', 'INTEGER'), ('uid', 'STRING')]
         defined_columns = [('i', 'INTEGER'), ('bool', 'BOOLEAN'), ('d', 'DOUBLE'), ('s', 'STRING'), ('b', 'BINARY')]
         table_meta = TableMeta(table_name, schema_of_primary_key, defined_columns)
@@ -224,7 +259,7 @@ class TableOperationTest(APITestBase):
 
     def test_create_secondary_index(self):
         """Test creating a secondary index"""
-        table_name = 'table_with_index' + self.get_python_version()
+        table_name = self.table_name_with_index
         schema_of_primary_key = [('gid', 'INTEGER'), ('uid', 'STRING')]
         defined_columns = [('i', 'INTEGER'), ('bool', 'BOOLEAN'), ('d', 'DOUBLE'), ('s', 'STRING'), ('b', 'BINARY')]
         table_meta = TableMeta(table_name, schema_of_primary_key, defined_columns)

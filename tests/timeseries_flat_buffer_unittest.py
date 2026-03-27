@@ -2,7 +2,7 @@
 
 import unittest
 
-from timeseries import FlatBufferRows
+from tablestore.flatbuffer.timeseries import FlatBufferRows
 from tests.lib.api_test_base import APITestBase
 import time
 from tablestore.flatbuffer import timeseries_flat_buffer_encoder
@@ -15,7 +15,7 @@ class TimeseriesFlatBufferTest(APITestBase):
     """TimeseriesFlatBufferTest"""
 
     def test_flat_buffer_encode(self):
-        """测试flatbuffer编码正确性"""
+        """Test the correctness of flatbuffer encoding"""
         tags = {"tag1": "t1", "tag2": "t2"}
         field1 = {"long_field": 1, "string_field": "string", "bool_field": True, "doubel_field": 0.3, "doubel_field2":0.4}
         field2 = {"long_field2": 3, "string_field2": "string2", "doubel_field2": 0.4, "byte_field": bytearray(b'abc1')}

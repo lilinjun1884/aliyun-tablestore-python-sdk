@@ -1,22 +1,39 @@
 # -*- coding: utf8 -*-
 
 import unittest
-from tests.lib.api_test_base import APITestBase
-from tablestore import *
-import tests.lib.restriction as restriction
-import copy
-from tablestore.error import *
-import math
 import time
 import sys
+import tests.lib.restriction as restriction
+from tests.lib.api_test_base import APITestBase
+from tests.test_utils import make_table_name
+from tablestore import *
+from tablestore.error import *
+
 
 if sys.getdefaultencoding() != 'utf-8':
     reload(sys)
     sys.setdefaultencoding('utf-8')
 
 
-class RowOpTest(APITestBase):
-    """Row read/write test"""
+class RowOperationTest(APITestBase):
+    """Row operation test"""
+
+    def setUp(self):
+        APITestBase.setUp(self)
+        # Initialize all table names
+        self.table_name = make_table_name('RowOperationTest')
+
+    def tearDown(self):
+        # Clean up all test tables
+        for table_name in self.client_test.list_table():
+            if table_name.find(self.table_name) == -1:
+                continue
+            try:
+                self.client_test.delete_table(table_name)
+            except:
+                pass
+        APITestBase.tearDown(self)
+
 
     # Row operation API: GetRow, PutRow, UpdateRow, BatchGetRow, BatchWriteRow, GetRange
     # Test each write operation, and verify the data operation meets expectations using GetRow or BatchGetRow.
@@ -178,7 +195,7 @@ class RowOpTest(APITestBase):
 
     def test_pk_name_not_match(self):
         """Create a table with PK `[('PK1', 'STRING')]`, test all row operation APIs. Use PK `[('PK2', 'blah')]`, expect to return OTSMetaNotMatch."""
-        table_name = 'XXB' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -194,7 +211,7 @@ class RowOpTest(APITestBase):
 
     def test_pk_value_type_not_match(self):
         """Create a table with PK `[('PK1', 'STRING')]`, test all row operation APIs. Use PK `[('PK2', 123)]`, expect to return `OTSMetaNotMatch`."""
-        table_name = 'XXC' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -210,7 +227,7 @@ class RowOpTest(APITestBase):
 
     def test_pk_num_not_match(self):
         """Create a table with PK being [('PK1', 'STRING'), ('PK2', 'INTEGER')], test all row operation APIs. PK is either {'PK1': 'blah'} or {'PK1': 'blah', 'PK2': 123, 'PK3': 'blah'}. Expected return is OTSMetaNotMatch."""
-        table_name = 'XXD' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING'), ('PK2', 'INTEGER')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -230,7 +247,7 @@ class RowOpTest(APITestBase):
 
     def test_pk_order_insensitive(self):
         """Create a table with PK being [('PK1', 'STRING'), ('PK2', 'INTEGER')], test all row operation APIs. The PK is OrderedDict([('PK2', 123), ('PK1', 'blah')]), and the corresponding operations are expected to fail."""
-        table_name = 'XXE' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING'), ('PK2', 'INTEGER')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -249,7 +266,7 @@ class RowOpTest(APITestBase):
 
     def test_all_the_types(self):
         """Create a table with PK being [('PK1', 'STRING'), ('PK2', 'INTEGER')], and let all row operation APIs operate on the row ({'PK1': 'blah', 'PK2': 123}, {'C1': 'blah', 'C2': 123, 'C3': True, 'C4': False, 'C5': 3.14, 'C6': bytearray(1)}), expecting the corresponding operations to succeed."""
-        table_name = 'XXF' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING'), ('PK2', 'INTEGER')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -265,7 +282,7 @@ class RowOpTest(APITestBase):
 
     def test_row_op_with_binary_type_pk(self):
         """Create a table with [('PK1', 'BINARY'), ('PK2', 'BINARY')], pre-insert some data into the table, test all read/write APIs for these data, and verify that all APIs are compatible after the PK type supports Binary."""
-        table_name = 'XXG' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'BINARY'), ('PK2', 'BINARY')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -281,8 +298,8 @@ class RowOpTest(APITestBase):
 
     def test_columns_to_get_semantics(self):
         """There are two tables, A and B, with four rows: A0, A1, B0, B1, distributed across these two tables. The data for all rows is the same: (`{'PK1': 'blah', 'PK2': 123}`, `{'C1': 'blah', 'C2': 123, 'C3': True, 'C4': False, 'C5': 3.14, 'C6': bytearray(1)}`). Use GetRow to read A0, BatchGetRow to read A0, A1, B0, B1, and GetRange to read A0, A1. The `columns_to_get` parameter is set respectively to empty, `['C1']`, `['PK1']`, and `['blah']`. It is expected that the returned results meet the expectations, and the CU (Capacity Unit) verification also meets the expectations."""
-        table_name_a = 'AA' + self.get_python_version()
-        table_name_b = 'BB' + self.get_python_version()
+        table_name_a = self.table_name + 'A'
+        table_name_b = self.table_name + 'B'
         table_meta_a = TableMeta(table_name_a, [('PK1', 'STRING'), ('PK2', 'INTEGER')])
         table_meta_b = TableMeta(table_name_b, [('PK1', 'STRING'), ('PK2', 'INTEGER')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
@@ -405,7 +422,7 @@ class RowOpTest(APITestBase):
 
     def test_CU_consumed_for_whole_row(self):
         """There is a row with data (`{'PK0' : 'blah'}`, `{'C1' : 500B, 'C2' : 500B}`), reading the entire row or just PK0, C1, C2, the expected consumed CU should be (2, 0) or (1, 0)."""
-        table_name = 'XXH' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK0', 'STRING')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -440,7 +457,7 @@ class RowOpTest(APITestBase):
 
     def test_get_row_miss(self):
         """Get a non-existent row using GetRow, expect an empty return, verify CU consumption (1, 0)"""
-        table_name = 'XXI' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -456,7 +473,7 @@ class RowOpTest(APITestBase):
 
     def test_update_row_when_row_exist(self):
         """The original row contains columns `{'C0' : 2k, 'C1' : 2k}` (2k refers to 2k unique STRING values), with data size less than 8K and greater than 4K. Test UpdateRow separately when row existence expectation is EXIST and IGNORE, with column values set as follows: `{'C0' : 2k, 'C1' : 2k}` (overwrite), `{'C2' : 2k, 'C3' : 2k}` (addition), `{'C0' : Delete, 'C1' : Delete}` (deletion), and `{'C0' : 2k, 'C1' : Delete, 'C2' : 2k}` (interleaved). Each time, use GetRow to check if the data matches the expected results and verify if CU consumption is correct."""
-        table_name = 'XXY' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -561,7 +578,7 @@ class RowOpTest(APITestBase):
 
     def test_update_row_when_value_type_changed(self):
         """The original row contains max columns, with values being INTEGER, DOUBLE, STRING(8 byte), BOOLEAN, BINARY(8 byte) respectively. Test PutRow containing max columns, with values being INTEGER, DOUBLE, STRING(8 byte), BOOLEAN, BINARY(8 byte) respectively. Check the data each time GetRow is performed and verify that CU consumption is normal."""
-        table_name = 'XXX' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -621,7 +638,7 @@ class RowOpTest(APITestBase):
 
     def test_update_row_but_expect_row_not_exist(self):
         """The row existence expectation for UpdateRow is set to EXIST, expecting anOTSParameterInvalid return."""
-        table_name = 'XXA' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -636,11 +653,11 @@ class RowOpTest(APITestBase):
                                         Condition(RowExistenceExpectation.EXPECT_EXIST))
             self.assert_false()
         except OTSServiceError as e:
-            self.assert_error(e, 403, "OTSConditionCheckFail", "Condition check failed.")
+            self.assert_error(e, 403, "OTSConditionCheckFail", "Row does not exist which is expected existent")
 
     def test_delete_row_but_expect_row_not_exist(self):
         """The row existence expectation for DeleteRow is NOT_EXIST, expecting return OTSInvalidPK."""
-        table_name = 'XXJ' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(
@@ -655,11 +672,11 @@ class RowOpTest(APITestBase):
             self.client_test.delete_row(table_name, [('PK1', '0')], Condition(RowExistenceExpectation.EXPECT_EXIST))
             self.assert_false()
         except OTSServiceError as e:
-            self.assert_error(e, 403, "OTSConditionCheckFail", "Condition check failed.")
+            self.assert_error(e, 403, "OTSConditionCheckFail", "Row does not exist which is expected existent")
 
     def test_get_range_less_than_4K(self):
         """GetRange includes 10 rows, data does not exceed 4K, or is greater than 4K but less than 8K, expected to consume CU(1, 0) or (2, 0)"""
-        table_name = 'XXK' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK1', 'STRING')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,
@@ -804,7 +821,7 @@ class RowOpTest(APITestBase):
                                               pk_name="P" * (restriction.MaxColumnNameLength - 1),
                                               pk_value="x" * (restriction.MaxPKStringValueLength))
 
-        table_name = "table_test" + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, pk_schema)
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(
@@ -850,7 +867,7 @@ class RowOpTest(APITestBase):
 
     def test_batch_get_on_the_same_row(self):
         """Create a table T, a row R, with data size < 1KB, BatchGetRow([(T, [R, R])]), duplicate rows, expect to return OTSInvalidPK. Then BatchGetRow([(T, [R]), (T, [R])]) again, same named tables in different groups, expect to return OTSInvalidPK."""
-        table_name = 'table_test_batch_get_on_the_same_row' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK0', 'STRING'), ('PK1', 'INTEGER')])
         pk_dict = [('PK0', 'a'), ('PK1', 1)]
         column_dict = [('col1', 'M' * 500)]
@@ -881,7 +898,7 @@ class RowOpTest(APITestBase):
 
     def test_batch_write_on_the_same_row(self):
         """BatchWriteRow, for put, delete, update operations on the same row (under the same table name or two repeated table names), expects to return OTSInvalidPK."""
-        table_name = 'table_test_batch_write_on_the_same_row' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK0', 'STRING'), ('PK1', 'INTEGER')])
         pk_dict = [('PK0', 'a'), ('PK1', 1)]
         pk_dict_2 = [('PK0', 'a'), ('PK1', 2)]
@@ -909,13 +926,13 @@ class RowOpTest(APITestBase):
 
     def test_no_item_in_batch_ops(self):
         """BatchGetRow and BatchWriteRow do not contain any rows, expect to return OTSInvalidPK."""
-        table_name = 'table_test_no_item_in_batch_ops' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK0', 'STRING'), ('PK1', 'INTEGER')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
 
         self.client_test.create_table(table_meta, table_options, reserved_throughput)
-        self.wait_for_partition_load('table_test_no_item_in_batch_ops')
+        self.wait_for_partition_load(table_name)
 
         try:
             request = BatchWriteRowRequest()
@@ -925,7 +942,7 @@ class RowOpTest(APITestBase):
             self.assert_false()
         except OTSServiceError as e:
             self.assert_error(e, 400, "OTSParameterInvalid",
-                              "No operation is specified for table: 'table_test_no_item_in_batch_ops" + self.get_python_version() + "'.")
+                              "No operation is specified for table: '" + table_name + "'.")
 
         try:
             request = BatchGetRowRequest()
@@ -936,13 +953,13 @@ class RowOpTest(APITestBase):
 
     def test_no_table_in_batch_ops(self):
         """BatchGetRow and BatchWriteRow do not contain any rows, expect to return OTSInvalidPK."""
-        table_name = 'table_test_no_item_in_batch_ops' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK0', 'STRING'), ('PK1', 'INTEGER')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
 
         self.client_test.create_table(table_meta, table_options, reserved_throughput)
-        self.wait_for_partition_load('table_test_no_item_in_batch_ops')
+        self.wait_for_partition_load(table_name)
 
         try:
             request = BatchWriteRowRequest()
@@ -960,9 +977,9 @@ class RowOpTest(APITestBase):
 
     def test_get_range_when_direction_is_wrong_for_1_PK(self):
         """A table has 1 PK, the test direction is FORWARD/FORWARD, the first begin (greater than or equal to)/(less than or equal to) end, and the PK types are STRING, INTEGER respectively. The expected return is OTSInvalidPK."""
-        table_name_string = 'table_test_get_range_when_direction_string' + self.get_python_version()
+        table_name_string = self.table_name + "_string"
         table_meta_string = TableMeta(table_name_string, [('PK0', 'STRING')])
-        table_name_integer = 'table_test_get_range_when_direction_integer' + self.get_python_version()
+        table_name_integer = self.table_name + "_integer"
         table_meta_integer = TableMeta(table_name_integer, [('PK0', 'INTEGER')])
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
         table_options = TableOptions()
@@ -1000,7 +1017,7 @@ class RowOpTest(APITestBase):
 
     def test_all_the_ranges_for_2_PK(self):
         """A table has 2 primary keys (PKs), the partition key is a < b < c < d, which can be STRING, INTEGER (test separately). Each partition key has 2 rows: ax, ay, bx, by, cx, cy, where x and y are the values of the second PK, being STRING, INTEGER, BOOLEAN respectively. Test `get_range` in both forward and reverse directions (for reverse direction, swap begin and end): (a MIN, b MAX), (b MAX, a MIN) (error), (b MIN, a MAX) (error), (a MIN, a MAX), (a MAX, a MIN) (error), (a MAX, b MIN), (a MAX, c MIN), (b x, a x) (error), (a x, a y), (a MIN, a y), (a x, a MAX), (a x, c x), (a x, c y), (a y, c x), (a x, a x) (error). For each successful operation, verify that the returned data matches expectations and CU consumption is as expected."""
-        raw_table_name = 'TE' + self.get_python_version()
+        raw_table_name = self.table_name
         for first_pk_type in ('STRING', 'INTEGER'):
             for second_pk_type in ('STRING', 'INTEGER'):
                 table_name = raw_table_name + first_pk_type + second_pk_type
@@ -1074,7 +1091,7 @@ class RowOpTest(APITestBase):
 (`'A'`, `'A'`, `10`, `False`, `'A'`, `'A'`, `9`, `True`) (error), 
 (`'A'`, `'A'`, `10`, `MAX`, `'A'`, `'B'`, `10`, `MIN`), 
 (`'A'`, `MIN`, `10`, `False`, `'B'`, `MAX`, `2`, `True`). Construct data so that each interval has a value."""
-        table_name = 'table_test_4_PK_range' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name,
                                [('PK0', 'STRING'), ('PK1', 'STRING'), ('PK2', 'INTEGER'), ('PK3', 'INTEGER')])
         table_options = TableOptions()
@@ -1112,10 +1129,10 @@ class RowOpTest(APITestBase):
 
     def test_empty_range(self):
         """Test four tables with the number of PKs being 1, 2, 3, and 4 respectively, where the number of rows included in the range is 0. The expected return is empty, and the CU consumption is (1, 0)."""
-        table_name_list = ['table_test_empty_range_0' + self.get_python_version(),
-                           'table_test_empty_range_1' + self.get_python_version(),
-                           'table_test_empty_range_2' + self.get_python_version(),
-                           'table_test_empty_range_3' + self.get_python_version()]
+        table_name_list = [self.table_name + '_1',
+                           self.table_name + '_2',
+                           self.table_name + '_3',
+                           self.table_name + '_4']
         pk_schema0, pk_dict0_exclusive = self.get_primary_keys(1, 'STRING', 'PK', INF_MAX)
         pk_schema1, pk_dict1_exclusive = self.get_primary_keys(2, 'STRING', 'PK', INF_MAX)
         pk_schema2, pk_dict2_exclusive = self.get_primary_keys(3, 'STRING', 'PK', INF_MAX)
@@ -1144,7 +1161,7 @@ class RowOpTest(APITestBase):
 
     def test_get_range_limit_invalid(self):
         """Test get_range with limit set to 0 or -1, expecting to return error OTSInvalidPK"""
-        table_name = 'table_test_get_range_limit_invalid' + self.get_python_version()
+        table_name = self.table_name
         table_meta = TableMeta(table_name, [('PK0', 'STRING')])
         table_options = TableOptions()
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -1179,7 +1196,7 @@ class RowOpTest(APITestBase):
     def test_all_item_in_batch_write_row_failed(self):
         """When all items in the batch write row fail completely on the backend, it is expected that each item returns a specific error, while the entire operation returns normally."""
 
-        table1 = "table1" + self.get_python_version()
+        table1 = self.table_name
         table_meta1 = TableMeta(table1, [("PK", "INTEGER")])
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
         table_options = TableOptions()
@@ -1202,24 +1219,24 @@ class RowOpTest(APITestBase):
         self.assert_equal(0, len(put_succ))
         self.assert_equal(1, len(put_failed))
         self.assert_equal('OTSConditionCheckFail', put_failed[0].error_code)
-        self.assert_equal('Condition check failed.', put_failed[0].error_message)
+        self.assert_equal('Row does not exist which is expected existent', put_failed[0].error_message)
 
         update_succ, update_failed = response.get_update()
         self.assert_equal(0, len(update_succ))
         self.assert_equal(1, len(update_failed))
         self.assert_equal('OTSConditionCheckFail', update_failed[0].error_code)
-        self.assert_equal('Condition check failed.', update_failed[0].error_message)
+        self.assert_equal('Row does not exist which is expected existent', update_failed[0].error_message)
 
         delete_succ, delete_failed = response.get_delete()
         self.assert_equal(0, len(delete_succ))
         self.assert_equal(1, len(delete_failed))
         self.assert_equal('OTSConditionCheckFail', delete_failed[0].error_code)
-        self.assert_equal('Condition check failed.', delete_failed[0].error_message)
+        self.assert_equal('Row does not exist which is expected existent', delete_failed[0].error_message)
 
     def test_one_delete_in_update(self):
         """When a row is empty, perform an UpdateRow, and it only contains a Delete operation."""
 
-        table_name = 'TA' + self.get_python_version()
+        table_name = self.table_name
 
         table_meta = TableMeta(table_name, [("PK", "INTEGER")])
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -1230,10 +1247,65 @@ class RowOpTest(APITestBase):
         cu, rrow = self.client_test.update_row(table_name, Row([("PK", 11)], {"delete_all": [("Col0")]}),
                                                Condition(RowExistenceExpectation.IGNORE))
 
+    def test_delete_with_timestamp_in_update(self):
+        """Test UpdateRow with delete operation that specifies a timestamp to delete a specific column version."""
+
+        table_name = self.table_name
+
+        table_meta = TableMeta(table_name, [("PK", "INTEGER")])
+        reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
+        table_options = TableOptions(max_version=2)
+        self.client_test.create_table(table_meta, table_options, reserved_throughput)
+        self.wait_for_partition_load(table_name)
+
+        pks = [("PK", 1)]
+
+        # Step 1: Write two versions of Col0 with different timestamps using put
+        # get current timestamp in ms
+        ts1 = int(round(time.time() * 1000)) + 1000
+        ts2 = int(round(time.time() * 1000)) + 2000
+        cu, rrow = self.client_test.update_row(
+            table_name,
+            Row(pks, {'put': [('Col0', 'value_v1', ts1), ('Col0', 'value_v2', ts2)]}),
+            Condition(RowExistenceExpectation.IGNORE)
+        )
+
+        # Verify both versions exist
+        cu, rrow, token = self.client_test.get_row(table_name, pks, max_version=2)
+        self.assert_equal(rrow.primary_key, pks)
+        self.assert_equal(len(rrow.attribute_columns), 2)
+
+        # Step 2: Delete only the version with ts2 using delete (not delete_all)
+        cu, rrow = self.client_test.update_row(
+            table_name,
+            Row(pks, {'delete': [('Col0', None, ts2)]}),
+            Condition(RowExistenceExpectation.IGNORE)
+        )
+
+        # Step 3: Verify only the ts1 version remains
+        cu, rrow, token = self.client_test.get_row(table_name, pks, max_version=2)
+        self.assert_equal(rrow.primary_key, pks)
+        self.assert_equal(len(rrow.attribute_columns), 1)
+        self.assert_equal(rrow.attribute_columns[0][0], 'Col0')
+        self.assert_equal(rrow.attribute_columns[0][1], 'value_v1')
+        self.assert_equal(rrow.attribute_columns[0][2], ts1)
+
+        # Step 4: Delete the remaining version with ts1
+        cu, rrow = self.client_test.update_row(
+            table_name,
+            Row(pks, {'delete': [('Col0', None, ts1)]}),
+            Condition(RowExistenceExpectation.IGNORE)
+        )
+
+        # Step 5: Verify the row has no attribute columns
+        cu, rrow, token = self.client_test.get_row(table_name, pks, max_version=2)
+        self.assert_equal(rrow.primary_key, pks)
+        self.assert_equal(len(rrow.attribute_columns), 0)
+
     def test_all_delete_in_update(self):
         """When a row is empty, perform an UpdateRow with 128 Delete operations."""
 
-        table_name = 'TB' + self.get_python_version()
+        table_name = self.table_name
 
         table_meta = TableMeta(table_name, [("PK", "INTEGER")])
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -1254,7 +1326,7 @@ class RowOpTest(APITestBase):
     def test_one_delete_in_update_of_batch_write(self):
         """When a row is empty, perform a BatchWriteRow UpdateRow with only one Delete operation."""
 
-        table_name = 'TC' + self.get_python_version()
+        table_name = self.table_name
 
         table_meta = TableMeta(table_name, [("PK", "INTEGER")])
         table_options = TableOptions()
@@ -1282,7 +1354,7 @@ class RowOpTest(APITestBase):
     def test_all_delete_in_update_of_batch_write(self):
         """When a row is empty, perform a BatchWriteRow UpdateRow with 128 Delete operations included."""
 
-        table_name = 'TD' + self.get_python_version()
+        table_name = self.table_name
 
         table_meta = TableMeta(table_name, [("PK", "INTEGER")])
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -1307,7 +1379,7 @@ class RowOpTest(APITestBase):
 
     def test_bytearray(self):
         '''Use the two constructors of bytearray to construct row value, ensuring successful read and write operations.'''
-        table_name = "bytearray" + self.get_python_version()
+        table_name = self.table_name
 
         table_meta = TableMeta(table_name, [("PK1", "BINARY"), ("PK2", "BINARY")])
         reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
@@ -1393,6 +1465,75 @@ class RowOpTest(APITestBase):
         consumed, return_row, next_token = self.client_test.get_row(table_name, primary_key3, [], None, 1)
         self.assert_equal(return_row, None)
 
+
+    def test_bytes_pk_type(self):
+        '''Write with bytes (not bytearray) as PK value and verify the actual type returned by get_row.
+
+        In the current SDK implementation, bytes (six.binary_type) is encoded as VT_STRING
+        rather than VT_BLOB, so get_row returns str instead of bytearray.
+        This test documents and verifies that behavior.
+        '''
+        table_name = self.table_name
+
+        table_meta = TableMeta(table_name, [("PK1", "STRING"), ("PK2", "INTEGER")])
+        reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
+        table_options = TableOptions()
+        self.client_test.create_table(table_meta, table_options, reserved_throughput)
+        self.wait_for_partition_load(table_name)
+
+        # Write with bytes PK value (not bytearray)
+        bytes_value = b'hello_bytes'
+        primary_key = [('PK1', bytes_value), ('PK2', 1)]
+        attribute_columns = [('col1', 'value1'), ('col2', 100)]
+        row = Row(primary_key, attribute_columns)
+
+        consumed, return_row = self.client_test.put_row(table_name, row, None)
+
+        # Read back and inspect the actual types
+        consumed, return_row, next_token = self.client_test.get_row(table_name, primary_key, [], None, 1)
+        self.assertIsNotNone(return_row, "get_row should return a non-None row")
+
+        returned_pk_value = return_row.primary_key[0][1]
+        print(f"\n[test_bytes_pk_type] Input type: {type(bytes_value).__name__}, "
+              f"Returned type: {type(returned_pk_value).__name__}, "
+              f"Returned value: {returned_pk_value!r}")
+
+        # bytes (binary_type) is encoded as VT_STRING by PlainBuffer, so the returned value is str
+        self.assertIsInstance(returned_pk_value, str,
+                              f"Expected str but got {type(returned_pk_value).__name__}. "
+                              f"bytes PK is encoded as VT_STRING, not VT_BLOB.")
+        self.assertEqual(returned_pk_value, bytes_value.decode('utf-8'),
+                         "Returned string value should match the decoded bytes input")
+
+        # Also verify attribute columns are correct
+        self.assert_columns(return_row.attribute_columns, attribute_columns)
+
+        # Contrast: write with bytearray PK on a BINARY table to show the difference
+        table_name_binary = self.table_name + "_binary"
+        table_meta_binary = TableMeta(table_name_binary, [("PK1", "BINARY"), ("PK2", "INTEGER")])
+        self.client_test.create_table(table_meta_binary, table_options, reserved_throughput)
+        self.wait_for_partition_load(table_name_binary)
+
+        bytearray_value = bytearray(b'hello_bytearray')
+        primary_key_binary = [('PK1', bytearray_value), ('PK2', 1)]
+        row_binary = Row(primary_key_binary, attribute_columns)
+        consumed, return_row = self.client_test.put_row(table_name_binary, row_binary, None)
+
+        consumed, return_row_binary, next_token = self.client_test.get_row(
+            table_name_binary, primary_key_binary, [], None, 1)
+        self.assertIsNotNone(return_row_binary, "get_row should return a non-None row for BINARY table")
+
+        returned_binary_pk_value = return_row_binary.primary_key[0][1]
+        print(f"[test_bytes_pk_type] bytearray input type: {type(bytearray_value).__name__}, "
+              f"Returned type: {type(returned_binary_pk_value).__name__}, "
+              f"Returned value: {returned_binary_pk_value!r}")
+
+        # bytearray is encoded as VT_BLOB, so the returned value is bytearray
+        self.assertIsInstance(returned_binary_pk_value, bytearray,
+                              f"Expected bytearray but got {type(returned_binary_pk_value).__name__}. "
+                              f"bytearray PK is encoded as VT_BLOB.")
+        self.assertEqual(returned_binary_pk_value, bytearray_value,
+                         "Returned bytearray value should match the input")
 
 if __name__ == '__main__':
     unittest.main()

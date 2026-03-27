@@ -5,16 +5,14 @@ import unittest
 from tests.lib.api_test_base import APITestBase
 from tablestore import *
 import tests.lib.restriction as restriction
-import copy
 from tablestore.error import *
-import math
-import time
+from tests.test_utils import make_table_name
 
 if sys.getdefaultencoding() != 'utf-8':
     reload(sys)
     sys.setdefaultencoding('utf-8')
 
-def batch_write_row(client,table_name,tp):
+def batch_write_row(client, table_name, tp):
     put_row_items = []
     for i in range(0, 10):
         if tp == "sql_test":
@@ -32,9 +30,22 @@ def batch_write_row(client,table_name,tp):
     client.batch_write_row(request)
     
 class SqlQueryTest(APITestBase):
+    def setUp(self):
+        APITestBase.setUp(self)
+        self.table_name_sql_query = make_table_name('SqlQuery')
+        self.table_name_fbs_decoder_types = make_table_name('fbsDecoderTypes')
+
+    def tearDown(self):
+        for t in [self.table_name_sql_query, self.table_name_fbs_decoder_types]:
+            try:
+                self.client_test.delete_table(t)
+            except:
+                pass
+        APITestBase.tearDown(self)
+
     def test_sql_query(self):
         """Test the execution results of SQL"""
-        table_name = 'SqlQuery' + self.get_python_version()
+        table_name = self.table_name_sql_query
         self.delete_table_and_index()
         table_meta = TableMeta(table_name, [('uid', 'STRING'),('pid', 'INTEGER')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
@@ -115,8 +126,7 @@ class SqlQueryTest(APITestBase):
     
     def test_fbs_decoder_types(self):
         """Test the fbs decoder result"""
-        table_name = 'fbsDecoderTypes' + self.get_python_version()
-        self.delete_table_and_index()
+        table_name = self.table_name_fbs_decoder_types
         table_meta = TableMeta(table_name, [('uid', 'STRING'),('pid', 'BINARY')])
         reserved_throughput = ReservedThroughput(CapacityUnit(
             restriction.MinReadWriteCapacityUnit,

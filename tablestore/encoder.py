@@ -1,6 +1,7 @@
 # -*- coding: utf8 -*-#
 
 import six
+import logging
 from builtins import int
 
 import crc32c
@@ -15,6 +16,33 @@ import tablestore.protobuf.search_pb2 as search_pb2
 import tablestore.protobuf.timeseries_pb2 as timeseries_pb2
 from tablestore.flatbuffer.timeseries_flat_buffer_encoder import *
 from tablestore.timeseries_condition import *
+
+logger = logging.getLogger(__name__)
+
+# Try to import native C++ encoder
+try:
+    from tablestore.ots_sdk import ots_sdk as _native_sdk
+    NATIVE_ENCODER_AVAILABLE = getattr(_native_sdk, 'NATIVE_ENCODER_AVAILABLE', False)
+    if NATIVE_ENCODER_AVAILABLE:
+        logger.info("Native C++ encoder is available, will use it for P0 APIs")
+except ImportError:
+    NATIVE_ENCODER_AVAILABLE = False
+    _native_sdk = None
+    logger.warning("Native C++ encoder not available, using Python implementation")
+
+
+class NativeEncodedBytes:
+    """Wrapper for bytes returned by native C++ encoder.
+
+    protocol.py checks isinstance(result, NativeEncodedBytes) to decide
+    whether to call SerializeToString() or use the bytes directly.
+    """
+
+    def __init__(self, data):
+        self.data = data
+
+    def SerializeToString(self):
+        return self.data
 
 INT8_MAX = 127
 INT8_MIN = -128
@@ -83,8 +111,11 @@ ROW_EXISTENCE_EXPECTATION_MAP = {
 
 class OTSProtoBufferEncoder(object):
 
-    def __init__(self, encoding):
+    def __init__(self, encoding, enable_native=True, native_fallback=True):
         self.encoding = encoding
+        self.enable_native = enable_native
+        self.native_fallback = native_fallback
+        self._use_native_encoder = NATIVE_ENCODER_AVAILABLE and enable_native
 
         self.api_encode_map = {
             'CreateTable'           : self._encode_create_table,
@@ -508,6 +539,12 @@ class OTSProtoBufferEncoder(object):
         if field_schema.vector_options is not None:
             self._make_vector_options(proto.vector_options, field_schema.vector_options)
 
+        if field_schema.json_type is not None:
+            proto.json_type = self._get_enum(field_schema.json_type)
+
+        if field_schema.text_similarity is not None:
+            proto.text_similarity = self._get_enum(field_schema.text_similarity)
+
     def _make_vector_options(self, proto_vector_options, vector_options):
         if vector_options.data_type is not None:
             proto_vector_options.data_type = self._get_enum(vector_options.data_type)
@@ -702,6 +739,44 @@ class OTSProtoBufferEncoder(object):
                     )
             proto.allow_update = table_options.allow_update
 
+    def _make_sse_spec(self, proto, sse_spec):
+        if not isinstance(sse_spec, SSESpecification):
+            raise OTSClientError(
+                "sse_spec should be an instance of SSESpecification, not %s"
+                % sse_spec.__class__.__name__
+            )
+        if sse_spec.enable is not None:
+            if not isinstance(sse_spec.enable, bool):
+                raise OTSClientError(
+                    "enable should be an instance of bool, not %s"
+                    % sse_spec.enable.__class__.__name__
+                    )
+            proto.enable = sse_spec.enable
+
+        if sse_spec.key_type is not None:
+            if not isinstance(sse_spec.key_type, int):
+                raise OTSClientError(
+                    "key_type should be an instance of int, not %s"
+                    % sse_spec.key_type.__class__.__name__
+                    )
+            proto.key_type = sse_spec.key_type
+
+        if sse_spec.key_id is not None:
+            if not isinstance(sse_spec.key_id, str):
+                raise OTSClientError(
+                    "key_id should be an instance of str, not %s"
+                    % sse_spec.key_id.__class__.__name__
+                    )
+            proto.key_id = sse_spec.key_id
+
+        if sse_spec.role_arn is not None:
+            if not isinstance(sse_spec.role_arn, str):
+                raise OTSClientError(
+                    "role_arn should be an instance of str, not %s"
+                    % sse_spec.role_arn.__class__.__name__
+                    )
+            proto.role_arn = sse_spec.role_arn
+
     def _make_capacity_unit(self, proto, capacity_unit):
 
         if not isinstance(capacity_unit, CapacityUnit):
@@ -851,7 +926,7 @@ class OTSProtoBufferEncoder(object):
         if isinstance(request, BatchWriteRowRequest):
             self._make_batch_write_row_internal(proto, request)
         else:
-            raise OTSClientError("The request should be a instance of MultiTableInBatchWriteRowItem, not %d"%(len(request.__class__.__name__)))
+            raise OTSClientError("The request should be a instance of BatchWriteRowRequest, not %s" % request.__class__.__name__)
 
     def _make_secondary_index(self, proto, secondary_index):
         proto.name = secondary_index.index_name
@@ -865,12 +940,13 @@ class OTSProtoBufferEncoder(object):
             proto.index_type = pb2.IT_LOCAL_INDEX
             proto.index_update_mode = pb2.IUM_SYNC_INDEX
 
-    def _encode_create_table(self, table_meta, table_options, reserved_throughput, secondary_indexes):
+    def _encode_create_table(self, table_meta, table_options, reserved_throughput, sse_spec, secondary_indexes):
         proto = pb2.CreateTableRequest()
         self._make_table_meta(proto.table_meta, table_meta)
         self._make_reserved_throughput(proto.reserved_throughput, reserved_throughput)
         self._make_table_options(proto.table_options, table_options)
-
+        if sse_spec is not None:
+            self._make_sse_spec(proto.sse_spec, sse_spec)
         for secondary_index in secondary_indexes:
             self._make_secondary_index(proto.index_metas.add(), secondary_index)
         return proto
@@ -900,6 +976,25 @@ class OTSProtoBufferEncoder(object):
 
     def _encode_get_row(self, table_name, primary_key, columns_to_get, column_filter,
                         max_version, time_range, start_column, end_column, token, transaction_id):
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_get_row(
+                    table_name, primary_key,
+                    columns_to_get=columns_to_get,
+                    column_filter=column_filter,
+                    max_version=max_version,
+                    time_range=time_range,
+                    start_column=start_column,
+                    end_column=end_column,
+                    token=token,
+                    transaction_id=transaction_id,
+                )
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_get_row failed, falling back to Python: %s", e)
+
         proto = pb2.GetRowRequest()
         proto.table_name = self._get_unicode(table_name)
         self._make_repeated_str(proto.columns_to_get, columns_to_get)
@@ -931,6 +1026,20 @@ class OTSProtoBufferEncoder(object):
         return proto
 
     def _encode_put_row(self, table_name, row, condition, return_type, transaction_id):
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_put_row(
+                    table_name, row,
+                    condition=condition,
+                    return_type=return_type,
+                    transaction_id=transaction_id,
+                )
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_put_row failed, falling back to Python: %s", e)
+
         proto = pb2.PutRowRequest()
         proto.table_name = self._get_unicode(table_name)
         if condition is None:
@@ -946,6 +1055,20 @@ class OTSProtoBufferEncoder(object):
         return proto
 
     def _encode_update_row(self, table_name, row, condition, return_type, transaction_id):
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_update_row(
+                    table_name, row,
+                    condition=condition,
+                    return_type=return_type,
+                    transaction_id=transaction_id,
+                )
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_update_row failed, falling back to Python: %s", e)
+
         proto = pb2.UpdateRowRequest()
         proto.table_name = self._get_unicode(table_name)
         if condition is None:
@@ -962,6 +1085,20 @@ class OTSProtoBufferEncoder(object):
         return proto
 
     def _encode_delete_row(self, table_name, primary_key, condition, return_type, transaction_id):
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_delete_row(
+                    table_name, primary_key,
+                    condition=condition,
+                    return_type=return_type,
+                    transaction_id=transaction_id,
+                )
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_delete_row failed, falling back to Python: %s", e)
+
         proto = pb2.DeleteRowRequest()
         proto.table_name = self._get_unicode(table_name)
         if condition is None:
@@ -978,11 +1115,29 @@ class OTSProtoBufferEncoder(object):
         return proto
 
     def _encode_batch_get_row(self, request):
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_batch_get_row(request)
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_batch_get_row failed, falling back to Python: %s", e)
+
         proto = pb2.BatchGetRowRequest()
         self._make_batch_get_row(proto, request)
         return proto
 
     def _encode_batch_write_row(self, request):
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_batch_write_row(request)
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_batch_write_row failed, falling back to Python: %s", e)
+
         proto = pb2.BatchWriteRowRequest()
         self._make_batch_write_row(proto, request)
         return proto
@@ -992,6 +1147,27 @@ class OTSProtoBufferEncoder(object):
                 columns_to_get, limit, column_filter,
                 max_version, time_range, start_column,
                 end_column, token, transaction_id):
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_get_range(
+                    table_name, direction,
+                    inclusive_start_primary_key, exclusive_end_primary_key,
+                    columns_to_get=columns_to_get,
+                    limit=limit,
+                    column_filter=column_filter,
+                    max_version=max_version,
+                    time_range=time_range,
+                    start_column=start_column,
+                    end_column=end_column,
+                    token=token,
+                    transaction_id=transaction_id,
+                )
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_get_range failed, falling back to Python: %s", e)
+
         proto = pb2.GetRangeRequest()
         proto.table_name = self._get_unicode(table_name)
         proto.direction = self._get_direction(direction)
@@ -1046,10 +1222,11 @@ class OTSProtoBufferEncoder(object):
 
         return proto
 
-    def _encode_describe_search_index(self, table_name, index_name):
+    def _encode_describe_search_index(self, table_name, index_name, include_sync_stat):
         proto = search_pb2.DescribeSearchIndexRequest()
         proto.table_name = self._get_unicode(table_name)
         proto.index_name = self._get_unicode(index_name)
+        proto.include_sync_stat = include_sync_stat
 
         return proto
 
@@ -1076,6 +1253,28 @@ class OTSProtoBufferEncoder(object):
         self._make_query(proto.filter, nested_filter.query_filter)
 
     def _encode_search(self, table_name, index_name, search_query, columns_to_get, routing_keys, timeout_s):
+        timeout_ms = None
+        if timeout_s is not None:
+            if not isinstance(timeout_s, int) and not isinstance(timeout_s, float):
+                raise OTSClientError("timeout_s must be an integer or float")
+            if timeout_s < 0:
+                raise OTSClientError("timeout_s must be a non-negative integer")
+            timeout_ms = int(timeout_s * 1000)
+        
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_search(
+                    table_name, index_name, search_query,
+                    columns_to_get=columns_to_get,
+                    routing_keys=routing_keys,
+                    timeout_ms=timeout_ms,
+                )
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_search failed, falling back to Python: %s", e)
+
         proto = search_pb2.SearchRequest()
         proto.table_name = table_name
         proto.index_name = index_name
@@ -1090,11 +1289,7 @@ class OTSProtoBufferEncoder(object):
                 proto.routing_values.append(bytes(PlainBufferBuilder.serialize_primary_key(routing_key)))
 
         if timeout_s is not None:
-            if not isinstance(timeout_s, int) and not isinstance(timeout_s, float):
-                raise OTSClientError("timeout_s must be an integer or float")
-            if timeout_s < 0:
-                raise OTSClientError("timeout_s must be a non-negative integer")
-            proto.timeout_ms = int(timeout_s * 1000)
+            proto.timeout_ms = timeout_ms
 
         return proto
 
@@ -1111,13 +1306,36 @@ class OTSProtoBufferEncoder(object):
         return proto
 
     def _encode_parallel_scan(self, table_name, index_name, scan_query, session_id, columns_to_get, timeout_s):
-        proto = search_pb2.ParallelScanRequest()
-
         if table_name is None:
             raise OTSClientError("table_name must not be None")
 
         if index_name is None:
             raise OTSClientError("index_name must not be None")
+        
+        timeout_ms = None
+        if timeout_s is not None:
+            if not isinstance(timeout_s, int) and not isinstance(timeout_s, float):
+                raise OTSClientError("timeout_s must be an integer or float")
+            if timeout_s < 0:
+                raise OTSClientError("timeout_s must be a non-negative integer")
+            timeout_ms = int(timeout_s * 1000)
+
+        if self._use_native_encoder:
+            try:
+                body = _native_sdk.encode_parallel_scan(
+                    table_name, index_name,
+                    scan_query=scan_query,
+                    session_id=session_id,
+                    columns_to_get=columns_to_get,
+                    timeout_ms=timeout_ms,
+                )
+                return NativeEncodedBytes(body)
+            except Exception as e:
+                if not self.native_fallback:
+                    raise
+                logger.warning("Native encode_parallel_scan failed, falling back to Python: %s", e)
+
+        proto = search_pb2.ParallelScanRequest()
 
         proto.table_name = table_name
         proto.index_name = index_name
@@ -1133,11 +1351,7 @@ class OTSProtoBufferEncoder(object):
             proto.session_id = bytes(session_id.encode('utf-8'))
 
         if timeout_s is not None:
-            if not isinstance(timeout_s, int) and not isinstance(timeout_s, float):
-                raise OTSClientError("timeout_s must be an integer or float")
-            if timeout_s < 0:
-                raise OTSClientError("timeout_s must be a non-negative integer")
-            proto.timeout_ms = int(timeout_s * 1000)
+            proto.timeout_ms = timeout_ms
 
         return proto
 
@@ -1148,8 +1362,7 @@ class OTSProtoBufferEncoder(object):
         if query.weight is not None:
             proto.weight = query.weight
 
-        if query.minimum_should_match is not None:
-            proto.minimum_should_match = query.minimum_should_match
+        self._encode_minimum_should_match(query, proto)
 
         if query.operator is not None:
             proto.operator = search_pb2.OR if (query.operator == QueryOperator.OR) else search_pb2.AND
@@ -1162,6 +1375,8 @@ class OTSProtoBufferEncoder(object):
         proto.text = self._get_unicode(query.text)
         if query.weight is not None:
             proto.weight = query.weight
+        if query.slop is not None:
+            proto.slop = query.slop
 
         return proto.SerializeToString()
 
@@ -1218,8 +1433,11 @@ class OTSProtoBufferEncoder(object):
             q_proto = proto.should_queries.add()
             self._make_query(q_proto, q)
 
-        if query.minimum_should_match is not None:
-            proto.minimum_should_match = query.minimum_should_match
+        self._encode_minimum_should_match(query, proto)
+
+        if query.weight is not None:
+            proto.weight = query.weight
+
         return proto.SerializeToString()
 
     def _encode_nested_query(self, query):
@@ -1320,7 +1538,39 @@ class OTSProtoBufferEncoder(object):
         if query.filter is not None:
             self._make_query(proto.filter, query.filter)
 
+        if query.min_score is not None:
+            proto.min_score = query.min_score
+
+        if query.num_candidates is not None:
+            proto.num_candidates = query.num_candidates
+
         return proto.SerializeToString()
+
+    def _encode_dis_max_query(self, query):
+        proto = search_pb2.DisMaxQuery()
+        for q in query.queries:
+            q_proto = proto.queries.add()
+            self._make_query(q_proto, q)
+
+        if query.tie_breaker is not None:
+            proto.tie_breaker = query.tie_breaker
+
+        if query.weight is not None:
+            proto.weight = query.weight
+
+        return proto.SerializeToString()
+
+    def _encode_minimum_should_match(self, query, proto):
+        if query.minimum_should_match is not None:
+            if isinstance(query.minimum_should_match, int):
+                proto.minimum_should_match = query.minimum_should_match
+            elif isinstance(query.minimum_should_match, str):
+                proto.new_minimum_should_match = query.minimum_should_match
+                # for compatibility, send both new and old version
+                if query.minimum_should_match.isdigit():
+                    proto.minimum_should_match = int(query.minimum_should_match)
+            else:
+                raise OTSClientError("minimum_should_match must be an integer or string")
 
     def _make_query(self, proto, query):
         if isinstance(query, MatchQuery):
@@ -1371,6 +1621,9 @@ class OTSProtoBufferEncoder(object):
         elif isinstance(query, KnnVectorQuery):
             proto.type = search_pb2.KNN_VECTOR_QUERY
             proto.query = self._encode_knn_vector_query(query)
+        elif isinstance(query, DisMaxQuery):
+            proto.type = search_pb2.DIS_MAX_QUERY
+            proto.query = self._encode_dis_max_query(query)
         else:
             raise OTSClientError(
                 "Invalid query type: %s"

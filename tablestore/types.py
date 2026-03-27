@@ -19,7 +19,7 @@ class PrimaryKey(DefaultJsonObject):
         return self.pks[index]
 
 class PrimaryKeyColumn(DefaultJsonObject):
-    def __init(self, name, value):
+    def __init__(self, name, value):
         self.name = name
         self.value = value
 

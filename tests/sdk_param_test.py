@@ -10,6 +10,7 @@ from tablestore.metadata import *
 from tablestore.error import *
 from tests.lib.mock_connection import MockConnection
 from tests.lib.test_config import *
+from tests.test_utils import make_table_name
 
 class SDKParamTest(unittest.TestCase):
 
@@ -22,197 +23,155 @@ class SDKParamTest(unittest.TestCase):
         logger.addHandler(handler)
         logger.setLevel(logging.INFO)
 
-        self.client = OTSClient(OTS_ENDPOINT, OTS_ACCESS_KEY_ID, OTS_ACCESS_KEY_SECRET, OTS_INSTANCE)
+        self.client = OTSClient(OTS_ENDPOINT, OTS_ACCESS_KEY_ID, OTS_ACCESS_KEY_SECRET, OTS_INSTANCE, enable_native=OTS_ENABLE_NATIVE, native_fallback=OTS_NATIVE_FALLBACK)
+        self.table_name = make_table_name('SDKParamTest')
+
+        if self.table_name in self.client.list_table():
+            self.client.delete_table(self.table_name)
+        schema_of_primary_key = [('gid', 'INTEGER')]
+        table_meta = TableMeta(self.table_name, schema_of_primary_key)
+        table_option = TableOptions(-1, 2)
+        reserved_throughput = ReservedThroughput(CapacityUnit(0, 0))
+        self.client.create_table(table_meta, table_option, reserved_throughput)
 
     def tearDown(self):
-        pass
+        try:
+            self.client.delete_table(self.table_name)
+        except Exception:
+            pass
 
     def test_list_table(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.list_table('one')
-            self.assertTrue(False)
-        except TypeError:
-            pass
 
     def test_create_table(self):
-        try:
+        with self.assertRaises(OTSClientError):
             self.client.create_table('one', 'two', 'three')
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             table_meta = TableMeta('test_table', ['PK1', 'STRING'])
             capacity_unit = CapacityUnit(10, 10)
             self.client.create_table(table_meta, TableOptions(), capacity_unit)
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             table_meta = TableMeta('test_table', [('PK1', 'STRING'), ('PK2', 'INTEGER')])
             capacity_unit = CapacityUnit(10, None)
             self.client.create_table(table_meta, TableOptions(), capacity_unit)
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             capacity_unit = CapacityUnit(10, 10)
             self.client.create_table('test_table', TableOptions(), capacity_unit)
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             table_meta = TableMeta('test_table', [('PK1', 'STRING'), ('PK2', 'INTEGER')])
             self.client.create_table(table_meta, TableOptions(), [1, 2])
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
 
     def test_delete_table(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.delete_table('one', 'two')
-            self.assertTrue(False)
-        except:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             capacity_unit = CapacityUnit(10, 10)
             self.client.delete_table(capacity_unit)
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
 
     def test_update_table(self):
-        try:
+        with self.assertRaises(OTSClientError):
             self.client.update_table('one', 'two', 'three')
-            self.assertTrue(False)
-        except:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             self.client.update_table('test_table', TableOptions(), (10, 10))
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             capacity_unit = CapacityUnit(None, None)
-            self.client.update_table('test_table', TableOptions(),capacity_unit)
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
+            self.client.update_table('test_table', TableOptions(), capacity_unit)
 
     def test_describe_table(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.describe_table('one', 'two')
-            self.assertTrue(False)
-        except:
-            pass
 
-        try:
-            response = self.client.describe_table(['test_table'])
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
+        with self.assertRaises(OTSClientError):
+            self.client.describe_table(['test_table'])
 
     def test_put_row(self):
-        try:
+        with self.assertRaises(AttributeError):
             self.client.put_row('one', 'two')
-            self.assertTrue(False)
-        except:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             primary_key = [('PK1','hello'), ('PK2',100)]
             attribute_columns = [('COL1','world'), ('COL2',1000)]
             condition = Condition('InvalidCondition')
-            consumed = self.client.put_row('test_table', condition, primary_key, attribute_columns)
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
+            self.client.put_row('test_table', condition, primary_key, attribute_columns)
 
         try:
             primary_key = [('PK1','hello'), ('PK2',100)]
             attribute_columns = [('COL1','world'), ('COL2',1000)]
-            consumed = self.client.put_row('test_table', [RowExistenceExpectation.IGNORE], primary_key, attribute_columns)
-            self.assertTrue(False)
-        except:
+            self.client.put_row('test_table', [RowExistenceExpectation.IGNORE], primary_key, attribute_columns)
+            self.fail("put_row should raise an error for invalid condition type")
+        except (OTSClientError, AttributeError):
             pass
 
         try:
             condition = Condition(RowExistenceExpectation.IGNORE)
-            consumed = self.client.put_row('test_table', condition, 'primary_key', 'attribute_columns')
-            self.assertTrue(False)
-        except:
+            self.client.put_row('test_table', condition, 'primary_key', 'attribute_columns')
+            self.fail("put_row should raise an error for invalid primary_key type")
+        except (OTSClientError, AttributeError):
             pass
 
     def test_get_row(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.get_row('one', 'two')
-            self.assertTrue(False)
-        except:
-            pass
 
         try:
-            consumed, resp_pks, resp_attribute_columns = self.client.get_row('test_table', 'primary_key', 'columns_to_get')
-            self.assertTrue(False)
-        except:
+            self.client.get_row('test_table', 'primary_key', 'columns_to_get')
+            self.fail("get_row should raise an error for invalid primary_key type")
+        except (OTSClientError, TypeError):
             pass
 
     def test_update_row(self):
-        try:
+        with self.assertRaises(AttributeError):
             self.client.update_row('one', 'two', 'three')
-            self.assertTrue(False)
-        except:
+
+        try:
+            condition = Condition(RowExistenceExpectation.IGNORE)
+            self.client.update_row('test_table', condition, [('PK1', 'STRING'), ('PK2', 'INTEGER')], 'update_of_attribute_columns')
+            self.fail("update_row should raise an error for invalid condition type")
+        except (OTSClientError, AttributeError):
             pass
 
         try:
             condition = Condition(RowExistenceExpectation.IGNORE)
-            consumed = self.client.update_row('test_table', condition, [('PK1', 'STRING'), ('PK2', 'INTEGER')], 'update_of_attribute_columns')
-            self.assertTrue(False)
-        except OTSClientError as e:
+            self.client.update_row('test_table', condition, [('PK1', 'STRING'), ('PK2', 'INTEGER')], [('ncv', 1)])
+            self.fail("update_row should raise an error for invalid condition type")
+        except (OTSClientError, AttributeError):
             pass
 
         try:
             condition = Condition(RowExistenceExpectation.IGNORE)
-            consumed = self.client.update_row('test_table', condition, [('PK1', 'STRING'), ('PK2', 'INTEGER')], [('ncv', 1)])
-            self.assertTrue(False)
-        except OTSClientError as e:
+            self.client.update_row('test_table', condition, [('PK1', 'STRING'), ('PK2', 'INTEGER')], {'put' : []})
+            self.fail("update_row should raise an error for invalid condition type")
+        except (OTSClientError, AttributeError):
             pass
 
         try:
             condition = Condition(RowExistenceExpectation.IGNORE)
-            consumed = self.client.update_row('test_table', condition, [('PK1', 'STRING'), ('PK2', 'INTEGER')], {'put' : []})
-            self.assertTrue(False)
-        except OTSClientError as e:
-            pass
-
-        try:
-            condition = Condition(RowExistenceExpectation.IGNORE)
-            consumed = self.client.update_row('test_table', condition, [('PK1', 'STRING'), ('PK2', 'INTEGER')], {'delete' : []})
-            self.assertTrue(False)
-        except OTSClientError as e:
+            self.client.update_row('test_table', condition, [('PK1', 'STRING'), ('PK2', 'INTEGER')], {'delete' : []})
+            self.fail("update_row should raise an error for invalid condition type")
+        except (OTSClientError, AttributeError):
             pass
 
     def test_delete_row(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.delete_row('one', 'two', 'three', 'four')
-            self.assertTrue(False)
-        except:
-            pass
 
         try:
             condition = Condition(RowExistenceExpectation.IGNORE)
-            consumed = self.client.delete_row('test_table', condition, 'primary_key')
-            self.assertTrue(False)
-        except:
+            self.client.delete_row('test_table', condition, 'primary_key')
+            self.fail("delete_row should raise an error for invalid primary_key type")
+        except (OTSClientError, TypeError):
             pass
     
     def test_delete_row_compatible(self):
-        table_name = 'test_delete_row_compatible'
+        table_name = self.table_name
         primary_key = [('gid',1)]
         row = Row(primary_key)
         condition = Condition(RowExistenceExpectation.IGNORE)
@@ -242,137 +201,109 @@ class SDKParamTest(unittest.TestCase):
         self.client.delete_table(table_name)
 
     def test_batch_get_row(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.batch_get_row('one', 'two')
-            self.assertTrue(False)
-        except:
-            pass
 
         try:
-            response = self.client.batch_get_row('batches')
-            self.assertTrue(False)
-        except OTSClientError:
+            self.client.batch_get_row('batches')
+            self.fail("batch_get_row should raise an error for invalid input")
+        except (OTSClientError, AttributeError):
             pass
 
     def test_batch_write_row(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.batch_write_row('one', 'two')
-            self.assertTrue(False)
-        except:
+
+        try:
+            self.client.batch_write_row('batches')
+            self.fail("batch_write_row should raise an error for invalid input")
+        except (OTSClientError, AttributeError):
             pass
 
         try:
-            response = self.client.batch_write_row('batches')
-            self.assertTrue(False)
-        except OTSClientError:
+            self.client.batch_write_row([('test_table')])
+            self.fail("batch_write_row should raise an error for invalid input")
+        except (OTSClientError, AttributeError):
             pass
 
-        batch_list = [('test_table')]
         try:
-            response = self.client.batch_write_row(batch_list)
-            self.assertTrue(False)
-        except OTSClientError:
+            self.client.batch_write_row([{'table_name':None}])
+            self.fail("batch_write_row should raise an error for invalid input")
+        except (OTSClientError, AttributeError):
             pass
 
-        batch_list = [{'table_name':None}]
         try:
-            response = self.client.batch_write_row(batch_list)
-            self.assertTrue(False)
-        except OTSClientError:
+            self.client.batch_write_row([{'table_name':'abc', 'put':None}])
+            self.fail("batch_write_row should raise an error for invalid input")
+        except (OTSClientError, AttributeError):
             pass
 
-        batch_list = [{'table_name':'abc', 'put':None}]
         try:
-            response = self.client.batch_write_row(batch_list)
-            self.assertTrue(False)
-        except OTSClientError:
+            self.client.batch_write_row([{'table_name':'abc', 'put':['xxx']}])
+            self.fail("batch_write_row should raise an error for invalid input")
+        except (OTSClientError, AttributeError):
             pass
 
-        batch_list = [{'table_name':'abc', 'put':['xxx']}]
         try:
-            response = self.client.batch_write_row(batch_list)
-            self.assertTrue(False)
-        except OTSClientError:
+            self.client.batch_write_row([{'table_name':'abc', 'Put':[]}])
+            self.fail("batch_write_row should raise an error for invalid input")
+        except (OTSClientError, AttributeError):
             pass
 
-        batch_list = [{'table_name':'abc', 'Put':[]}]
         try:
-            response = self.client.batch_write_row(batch_list)
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
-
-        batch_list = [{'table_name':'abc', 'Any':[]}]
-        try:
-            response = self.client.batch_write_row(batch_list)
-            self.assertTrue(False)
-        except OTSClientError:
+            self.client.batch_write_row([{'table_name':'abc', 'Any':[]}])
+            self.fail("batch_write_row should raise an error for invalid input")
+        except (OTSClientError, AttributeError):
             pass
 
     def test_get_range(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.get_range('one', 'two')
-            self.assertTrue(False)
-        except:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             start_primary_key = [('PK1','hello'),('PK2',100)]
             end_primary_key = [('PK1',INF_MAX),('PK2',INF_MIN)]
             columns_to_get = ['COL1','COL2']
-            response = self.client.get_range('table_name', 'InvalidDirection',
+            self.client.get_range('table_name', 'InvalidDirection',
                         start_primary_key, end_primary_key,
-                        columns_to_get, limit=100, max_version=1
-            )
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
+                        columns_to_get, limit=100, max_version=1)
 
         try:
             start_primary_key = ['PK1','hello','PK2',100]
             end_primary_key = [('PK1',INF_MAX), ('PK2',INF_MIN)]
             columns_to_get = ['COL1', 'COL2']
-            response = self.client.get_range('table_name', 'FORWARD',
+            self.client.get_range('table_name', 'FORWARD',
                         start_primary_key, end_primary_key,
-                        columns_to_get, limit=100, max_version=1
-            )
-            self.assertTrue(False)
-        except:
+                        columns_to_get, limit=100, max_version=1)
+            self.fail("get_range should raise an error for invalid start_primary_key format")
+        except (OTSClientError, TypeError):
             pass
 
         try:
             start_primary_key = [('PK1','hello'),('PK2',100)]
             end_primary_key = [('PK1',INF_MAX), ('PK2',INF_MIN)]
             columns_to_get = ['COL1', 'COL2']
-            response = self.client.get_range('table_name', 'FORWARD',
+            self.client.get_range('table_name', 'FORWARD',
                         start_primary_key, end_primary_key,
-                        columns_to_get, limit=100, max_version=-1
-            )
-            self.assertTrue(False)
-        except:
+                        columns_to_get, limit=100, max_version=-1)
+            self.fail("get_range should raise an error for table not exist")
+        except OTSServiceError:
             pass
 
         try:
-            response = self.client.get_range('table_name', 'FORWARD',
+            self.client.get_range('table_name', 'FORWARD',
                         'primary_key', 'primary_key', 'columns_to_get', 100)
-            self.assertTrue(False)
-        except:
+            self.fail("get_range should raise an error for invalid primary_key type")
+        except (OTSClientError, TypeError):
             pass
 
     def test_xget_range(self):
-        try:
+        with self.assertRaises(TypeError):
             self.client.xget_range('one', 'two')
-            self.assertTrue(False)
-        except:
-            pass
 
-        try:
+        with self.assertRaises(OTSClientError):
             iter = self.client.xget_range('one', 'two', 'three', 'four', 'five', 'six', 'seven')
-            #iter.next()
             next(iter)
-            self.assertTrue(False)
-        except OTSClientError:
-            pass
 
     def assert_client_error(self, error, message):
         self.assertEqual(str(error), message)
@@ -382,26 +313,17 @@ class SDKParamTest(unittest.TestCase):
         Condition(RowExistenceExpectation.EXPECT_EXIST)
         Condition(RowExistenceExpectation.EXPECT_NOT_EXIST)
 
-        try:
-            cond = Condition('errr')
-            self.assertTrue(False)
-        except OTSClientError as e:
-            self.assertEqual("Expect input row_existence_expectation should be one of ['RowExistenceExpectation.IGNORE', 'RowExistenceExpectation.EXPECT_EXIST', 'RowExistenceExpectation.EXPECT_NOT_EXIST'], but 'errr'", str(e))
+        with self.assertRaisesRegex(OTSClientError, "Expect input row_existence_expectation should be one of"):
+            Condition('errr')
 
-        try:
-            cond = Condition(RowExistenceExpectation.IGNORE, "")
-            self.assertTrue(False)
-        except OTSClientError as e:
-            self.assertEqual("The input column_condition should be an instance of ColumnCondition, not str", str(e))
+        with self.assertRaisesRegex(OTSClientError, "The input column_condition should be an instance of ColumnCondition, not str"):
+            Condition(RowExistenceExpectation.IGNORE, "")
 
-        try:
-            cond = Condition(RowExistenceExpectation.IGNORE, SingleColumnCondition("", "", ""))
-            self.assertTrue(False)
-        except OTSClientError as e:
-            self.assertEqual("Expect input comparator of SingleColumnCondition should be one of ['ComparatorType.EQUAL', 'ComparatorType.NOT_EQUAL', 'ComparatorType.GREATER_THAN', 'ComparatorType.GREATER_EQUAL', 'ComparatorType.LESS_THAN', 'ComparatorType.LESS_EQUAL'], but ''", str(e))
+        with self.assertRaisesRegex(OTSClientError, "Expect input comparator of SingleColumnCondition should be one of"):
+            Condition(RowExistenceExpectation.IGNORE, SingleColumnCondition("", "", ""))
 
         with self.assertRaisesRegex(OTSClientError, "Expect input comparator of SingleColumnRegexCondition should be one of"):
-            cond = Condition(RowExistenceExpectation.IGNORE, SingleColumnRegexCondition("", "", ""))
+            Condition(RowExistenceExpectation.IGNORE, SingleColumnRegexCondition("", "", ""))
 
     def test_column_condition(self):
         cond = SingleColumnCondition("uid", 100, ComparatorType.EQUAL)
@@ -431,17 +353,11 @@ class SDKParamTest(unittest.TestCase):
         SingleColumnCondition("uid", 100, ComparatorType.LESS_THAN)
         SingleColumnCondition("uid", 100, ComparatorType.LESS_EQUAL)
 
-        try:
-            cond = SingleColumnCondition("uid", 100, "")
-            self.assertTrue(False)
-        except OTSClientError as e:
-            self.assertEqual("Expect input comparator of SingleColumnCondition should be one of ['ComparatorType.EQUAL', 'ComparatorType.NOT_EQUAL', 'ComparatorType.GREATER_THAN', 'ComparatorType.GREATER_EQUAL', 'ComparatorType.LESS_THAN', 'ComparatorType.LESS_EQUAL'], but ''", str(e))
+        with self.assertRaisesRegex(OTSClientError, "Expect input comparator of SingleColumnCondition should be one of"):
+            SingleColumnCondition("uid", 100, "")
 
-        try:
-            cond = SingleColumnCondition("uid", 100, ComparatorType.LESS_EQUAL, "True")
-            self.assertTrue(False)
-        except OTSClientError as e:
-            self.assertEqual("The input pass_if_missing of SingleColumnCondition should be an instance of Bool, not str", str(e))
+        with self.assertRaisesRegex(OTSClientError, "The input pass_if_missing of SingleColumnCondition should be an instance of Bool, not str"):
+            SingleColumnCondition("uid", 100, ComparatorType.LESS_EQUAL, "True")
         
         with self.assertRaisesRegex(OTSClientError, "The input column_name of SingleColumnRegexCondition should be an instance of str, not int"):
             cond = SingleColumnRegexCondition(1, ComparatorType.EXIST)
@@ -472,12 +388,79 @@ class SDKParamTest(unittest.TestCase):
         CompositeColumnCondition(LogicalOperator.AND)
         CompositeColumnCondition(LogicalOperator.OR)
 
-        try:
-            cond = CompositeColumnCondition("")
-            self.assertTrue(False)
-        except OTSClientError as e:
-            self.assertEqual("Expect input combinator should be one of ['LogicalOperator.NOT', 'LogicalOperator.AND', 'LogicalOperator.OR'], but ''", str(e))
+        with self.assertRaisesRegex(OTSClientError, "Expect input combinator should be one of"):
+            CompositeColumnCondition("")
 
+
+    def test_search_timeout_s_param(self):
+        """Test timeout_s parameter validation for search method"""
+        from tablestore.metadata import SearchQuery, MatchAllQuery, ColumnsToGet, ColumnReturnType
+        
+        query = MatchAllQuery()
+        search_query = SearchQuery(query, limit=10)
+        columns_to_get = ColumnsToGet(return_type=ColumnReturnType.ALL)
+        
+        # Test timeout_s with string type
+        with self.assertRaisesRegex(OTSClientError, "timeout_s must be an integer or float"):
+            self.client.search('test_table', 'test_index', search_query, columns_to_get, timeout_s="invalid")
+        
+        # Test timeout_s with negative value
+        with self.assertRaisesRegex(OTSClientError, "timeout_s must be a non-negative integer"):
+            self.client.search('test_table', 'test_index', search_query, columns_to_get, timeout_s=-1)
+        
+        # Test timeout_s with negative float value
+        with self.assertRaisesRegex(OTSClientError, "timeout_s must be a non-negative integer"):
+            self.client.search('test_table', 'test_index', search_query, columns_to_get, timeout_s=-0.5)
+
+    def test_parallel_scan_timeout_s_param(self):
+        """Test timeout_s parameter validation for parallel_scan method"""
+        from tablestore.metadata import ScanQuery, MatchAllQuery, ColumnsToGet, ColumnReturnType
+        
+        query = MatchAllQuery()
+        scan_query = ScanQuery(query, next_token=None, limit=10, current_parallel_id=0, max_parallel=1)
+        columns_to_get = ColumnsToGet(return_type=ColumnReturnType.ALL)
+        session_id = "test_session_id"
+        
+        # Test timeout_s with string type
+        with self.assertRaisesRegex(OTSClientError, "timeout_s must be an integer or float"):
+            self.client.parallel_scan('test_table', 'test_index', scan_query, session_id, columns_to_get, timeout_s="invalid")
+        
+        # Test timeout_s with negative value
+        with self.assertRaisesRegex(OTSClientError, "timeout_s must be a non-negative integer"):
+            self.client.parallel_scan('test_table', 'test_index', scan_query, session_id, columns_to_get, timeout_s=-1)
+        
+        # Test timeout_s with negative float value
+        with self.assertRaisesRegex(OTSClientError, "timeout_s must be a non-negative integer"):
+            self.client.parallel_scan('test_table', 'test_index', scan_query, session_id, columns_to_get, timeout_s=-0.5)
+
+    def test_make_batch_write_row_with_invalid_request(self):
+        """Test _make_batch_write_row raises OTSClientError when request is not BatchWriteRowRequest"""
+        from tablestore.encoder import OTSProtoBufferEncoder
+        from tests.lib.test_config import OTS_ENABLE_NATIVE, OTS_NATIVE_FALLBACK
+        import tablestore.protobuf.table_store_pb2 as pb2
+
+        encoder = OTSProtoBufferEncoder("utf-8", enable_native=OTS_ENABLE_NATIVE, native_fallback=OTS_NATIVE_FALLBACK)
+        proto = pb2.BatchWriteRowRequest()
+
+        # Test with a string
+        with self.assertRaisesRegex(OTSClientError, "The request should be a instance of BatchWriteRowRequest, not str"):
+            encoder._make_batch_write_row(proto, "invalid_request")
+
+        # Test with a dict
+        with self.assertRaisesRegex(OTSClientError, "The request should be a instance of BatchWriteRowRequest, not dict"):
+            encoder._make_batch_write_row(proto, {"table": "test"})
+
+        # Test with a list
+        with self.assertRaisesRegex(OTSClientError, "The request should be a instance of BatchWriteRowRequest, not list"):
+            encoder._make_batch_write_row(proto, [1, 2, 3])
+
+        # Test with an integer
+        with self.assertRaisesRegex(OTSClientError, "The request should be a instance of BatchWriteRowRequest, not int"):
+            encoder._make_batch_write_row(proto, 12345)
+
+        # Test with None
+        with self.assertRaisesRegex(OTSClientError, "The request should be a instance of BatchWriteRowRequest, not NoneType"):
+            encoder._make_batch_write_row(proto, None)
 
 if __name__ == '__main__':
     unittest.main()

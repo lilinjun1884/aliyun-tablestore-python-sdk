@@ -12,6 +12,8 @@ class RandomOTSClient:
                  credentials_provider: CredentialsProvider = None, region: str = None, **kwargs):
         self.sync_client = OTSClient(end_point, access_key_id, access_key_secret, instance_name, credentials_provider, region, **kwargs)
         self.async_client = AsyncOTSClient(end_point, access_key_id, access_key_secret, instance_name, credentials_provider, region, **kwargs)
+        self.credentials_provider = self.sync_client.credentials_provider
+        self._signer = self.sync_client._signer
 
         self.logger = None
         self.set_logger()
@@ -55,5 +57,20 @@ class RandomOTSClient:
                 return asyncio.run(self._run_async_client_func(func_name, *args, **kwargs))
 
         return generated_func
+
+    def set_use_native_encoder(self, enable):
+        """Set _use_native_encoder for both sync and async clients' protocol encoders."""
+        self.sync_client.protocol.encoder._use_native_encoder = enable
+        self.async_client.protocol.encoder._use_native_encoder = enable
+
+    def set_use_native_decoder(self, enable):
+        """Set _use_native_decoder for both sync and async clients' protocol decoders."""
+        self.sync_client.protocol.decoder._use_native_decoder = enable
+        self.async_client.protocol.decoder._use_native_decoder = enable
+
+    def set_use_native_parser(self, enable):
+        """Set _use_native_parser for both sync and async clients' protocol decoders."""
+        self.sync_client.protocol.decoder._use_native_parser = enable
+        self.async_client.protocol.decoder._use_native_parser = enable
 
 tablestore.OTSClient = RandomOTSClient

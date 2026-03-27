@@ -1,6 +1,6 @@
 # -*- coding: utf8 -*-
 
-__version__ = '6.3.0'
+__version__ = '6.4.1'
 __all__ = [
     'OTSClient',
     'AsyncOTSClient',
@@ -50,6 +50,8 @@ __all__ = [
     'RowExistenceExpectation',
     'SearchIndexMeta',
     'FieldSchema',
+    'JsonType',
+    'TextSimilarity',
     'VectorOptions',
     'VectorDataType',
     'VectorMetricType',
@@ -108,6 +110,7 @@ __all__ = [
     'SecondaryIndexType',
     'ExistsQuery',
     'KnnVectorQuery',
+    'DisMaxQuery',
     'Agg',
     'Max',
     'Min',
