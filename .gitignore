@@ -14,7 +14,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -44,7 +43,7 @@ coverage.xml
 cover/
 *.mo
 *.pot
-*.log
+*.log*
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -81,3 +80,8 @@ cython_debug/
 .idea
 .DS_Store
 .python-version
+!tablestore/native/native_plainbuffer.cpython-313-darwin.so
+!tablestore/native/native_plainbuffer.so
+
+ots_python_sdk_config
+!tablestore/ots_sdk/ots_sdk.so
